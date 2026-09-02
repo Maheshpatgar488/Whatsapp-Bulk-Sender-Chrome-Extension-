@@ -1,0 +1,16 @@
+BEGIN:VCARD
+VERSION:3.0
+FN:John Doe
+N:Doe;John;;;
+TEL;TYPE=CELL:+919876543210
+ORG:Apex Solutions
+EMAIL:john@example.com
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+FN:Sarah Connor
+N:Connor;Sarah;;;
+TEL;TYPE=CELL:+14155552671
+ORG:Cyberdyne Tech
+EMAIL:sarah@example.com
+END:VCARD

@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "WhatsApp Business Bulk Sender",
+  "version": "1.2.0",
+  "description": "Send bulk personalized WhatsApp messages from Excel/CSV with placeholder tags, auto-delay pacing, and delivery export.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://web.whatsapp.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "WhatsApp Bulk Sender"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
