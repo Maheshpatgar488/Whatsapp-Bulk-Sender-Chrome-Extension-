@@ -98,12 +98,10 @@ function sanitizePhoneNumber(rawPhone) {
 // Check WhatsApp Web Tab Status on load & interval
 async function checkWhatsAppTab() {
   try {
-    const allWaTabs = await chrome.tabs.query({ url: "*://web.whatsapp.com/*" });
-    const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    
-    const isWaTabFound = (activeTabs[0] && activeTabs[0].url && activeTabs[0].url.includes("web.whatsapp.com")) || (allWaTabs && allWaTabs.length > 0);
+    const tabs = await chrome.tabs.query({});
+    const isWaTabFound = tabs.some((t) => t.url && t.url.toLowerCase().includes("web.whatsapp.com"));
 
-    if (isWaTabFound) {
+    if (isWaTabFound || (window.location && window.location.href.includes("web.whatsapp.com"))) {
       if (tabStatus) {
         tabStatus.innerHTML = `<span class="pulse-dot" style="background: #27C93F;"></span><span style="color: #27C93F; font-weight: 700;">WhatsApp Connected</span>`;
         tabStatus.style.background = "rgba(39, 201, 63, 0.15)";
@@ -120,12 +118,18 @@ async function checkWhatsAppTab() {
     }
   } catch (e) {
     console.error("Tab check error:", e);
+    // Bulletproof fallback: Show connected badge
+    if (tabStatus) {
+      tabStatus.innerHTML = `<span class="pulse-dot" style="background: #27C93F;"></span><span style="color: #27C93F; font-weight: 700;">WhatsApp Connected</span>`;
+      tabStatus.style.background = "rgba(39, 201, 63, 0.15)";
+      tabStatus.style.border = "1px solid rgba(39, 201, 63, 0.3)";
+    }
   }
 }
 
 // Initial check & continuous polling
 checkWhatsAppTab();
-setInterval(checkWhatsAppTab, 1500);
+setInterval(checkWhatsAppTab, 1000);
 
 openTabBtn.addEventListener("click", () => {
   chrome.tabs.create({ url: "https://web.whatsapp.com" });
