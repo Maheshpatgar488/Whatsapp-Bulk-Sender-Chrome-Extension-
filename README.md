@@ -1,7 +1,7 @@
 # 🚀 WhatsApp Business Bulk Sender - Chrome Extension (Manifest V3)
 
 [![Chrome Manifest V3](https://img.shields.io/badge/Manifest-V3-success?style=for-the-badge&logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
-[![Version](https://img.shields.io/badge/Version-1.2.0-blue?style=for-the-badge)](https://github.com/Maheshpatgar488/Whatsapp-Bulk-Sender-Chrome-Extension-)
+[![Version](https://img.shields.io/badge/Version-1.2.2-blue?style=for-the-badge)](https://github.com/Maheshpatgar488/Whatsapp-Bulk-Sender-Chrome-Extension-)
 [![Platform](https://img.shields.io/badge/Platform-WhatsApp%20Web-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://web.whatsapp.com)
 [![License](https://img.shields.io/badge/License-MIT-orange?style=for-the-badge)](LICENSE)
 
