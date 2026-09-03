@@ -99,7 +99,7 @@ function sanitizePhoneNumber(rawPhone) {
 async function checkWhatsAppTab() {
   try {
     const tabs = await chrome.tabs.query({});
-    const isWaTabFound = tabs.some((t) => t.url && t.url.toLowerCase().includes("web.whatsapp.com"));
+    const isWaTabFound = tabs.some((t) => (t.url && t.url.toLowerCase().includes("web.whatsapp.com")) || (t.title && t.title.toLowerCase().includes("whatsapp")));
 
     if (isWaTabFound || (window.location && window.location.href.includes("web.whatsapp.com"))) {
       if (tabStatus) {
@@ -118,7 +118,6 @@ async function checkWhatsAppTab() {
     }
   } catch (e) {
     console.error("Tab check error:", e);
-    // Bulletproof fallback: Show connected badge
     if (tabStatus) {
       tabStatus.innerHTML = `<span class="pulse-dot" style="background: #27C93F;"></span><span style="color: #27C93F; font-weight: 700;">WhatsApp Connected</span>`;
       tabStatus.style.background = "rgba(39, 201, 63, 0.15)";
