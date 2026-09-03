@@ -33,22 +33,47 @@ const progressWrap = document.getElementById("progressWrap");
 const progressFill = document.getElementById("progressFill");
 const tabStatus = document.getElementById("tabStatus");
 
+const livePreviewBubble = document.getElementById("livePreviewBubble");
+const previewTime = document.getElementById("previewTime");
+const dropzoneText = document.getElementById("dropzoneText");
+
 // Check WhatsApp Web Tab Status on load
 checkWhatsAppTab();
 
-// Initial button label
+// Initial button label & Live Preview Initialization
 updateModeButton();
+updateLivePreview();
 
 testModeToggle.addEventListener("change", updateModeButton);
+templateInput.addEventListener("input", updateLivePreview);
+
+function updateLivePreview() {
+  if (!livePreviewBubble) return;
+  const template = templateInput.value || "Hi {name}, we have an exclusive update for you from {company}!";
+  
+  const sampleContact = (contacts && contacts[0]) ? contacts[0] : { _parsedName: "John", Company: "Mahant Software", Offer: "20% Discount" };
+  const renderedText = buildMessage(template, sampleContact);
+
+  const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (previewTime) previewTime.textContent = currentTime;
+
+  livePreviewBubble.innerHTML = `
+    ${renderedText}
+    <div class="chat-bubble-footer">
+      <span>${currentTime}</span>
+      <span class="chat-ticks">✓✓</span>
+    </div>
+  `;
+}
 
 function updateModeButton() {
   if (testModeToggle.checked) {
-    startBtn.textContent = "🧪 Run Safe Test (Dry Run)";
-    startBtn.style.background = "#008069";
+    startBtn.innerHTML = "🧪 Run Safe Test (Dry Run)";
+    startBtn.style.background = "linear-gradient(135deg, #059669 0%, #047857 100%)";
     log("Safe Test Mode is ACTIVE. No real messages will be sent.", "info");
   } else {
-    startBtn.textContent = "🚀 Start Live Bulk Sending";
-    startBtn.style.background = "#00a884";
+    startBtn.innerHTML = "🚀 Start Live Bulk Sending";
+    startBtn.style.background = "linear-gradient(135deg, #00A884 0%, #128C7E 100%)";
     log("⚠️ Live Mode is ACTIVE. Messages will be sent to WhatsApp.", "info");
   }
 }
@@ -56,7 +81,7 @@ function updateModeButton() {
 function log(msg, type = "info") {
   const time = new Date().toLocaleTimeString();
   const entry = document.createElement("div");
-  entry.className = `log-entry log-${type}`;
+  entry.className = `log-line log-${type === 'error' ? 'err' : (type === 'success' ? 'ok' : 'inf')}`;
   entry.textContent = `[${time}] ${msg}`;
   logBox.appendChild(entry);
   logBox.scrollTop = logBox.scrollHeight;
@@ -105,6 +130,7 @@ function insertTagIntoTemplate(tag) {
   const newPos = cursorPos + tag.length;
   templateInput.setSelectionRange(newPos, newPos);
   templateInput.focus();
+  updateLivePreview();
 }
 
 // Add click listeners to default chips
@@ -262,11 +288,13 @@ function loadContactsIntoUI(parsedRows, fileName) {
 
   contacts = parsedRows;
   fileBadge.textContent = `✓ ${contacts.length} loaded`;
+  if (dropzoneText) dropzoneText.innerHTML = `📄 <b>${fileName}</b> (${contacts.length} Contacts)`;
   totalCountEl.textContent = contacts.length;
   sentCountEl.textContent = "0";
   failedCountEl.textContent = "0";
   startBtn.disabled = false;
   log(`Successfully loaded ${contacts.length} contacts from ${fileName}.`, "success");
+  updateLivePreview();
 }
 
 // Parse Excel / CSV / VCF File
