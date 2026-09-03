@@ -3,6 +3,12 @@
   "name": "WhatsApp Business Bulk Sender",
   "version": "1.2.0",
   "description": "Send bulk personalized WhatsApp messages from Excel/CSV with placeholder tags, auto-delay pacing, and delivery export.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "whatsapp-bulk-sender@maheshpatgar.com",
+      "strict_min_version": "109.0"
+    }
+  },
   "permissions": [
     "storage",
     "activeTab",
