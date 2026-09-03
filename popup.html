@@ -603,10 +603,18 @@
     .log-err { color: var(--danger); font-weight: 600; }
     .log-inf { color: var(--info); }
 
-    /* Primary Action Buttons */
+    /* Primary Action Buttons Container */
+    .actions-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 14px;
+      padding-bottom: 12px;
+    }
+
     .btn {
       width: 100%;
-      padding: 12px;
+      padding: 13px 16px;
       border: none;
       border-radius: 10px;
       font-size: 13.5px;
@@ -618,11 +626,12 @@
       gap: 8px;
       transition: all 0.2s ease;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      text-decoration: none;
     }
 
     .btn-main {
       background: var(--primary-gradient);
-      color: #ffffff;
+      color: #ffffff !important;
       box-shadow: 0 4px 16px var(--accent-glow);
     }
 
@@ -635,31 +644,48 @@
       transform: translateY(0);
     }
 
+    .btn-openwa {
+      background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+      color: #ffffff !important;
+      box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3);
+    }
+
+    .btn-openwa:hover {
+      background: linear-gradient(135deg, #059669 0%, #047857 100%);
+      box-shadow: 0 6px 20px rgba(16, 185, 129, 0.45);
+    }
+
     .btn-stop {
       background: linear-gradient(135deg, #FF4B4B 0%, #DC2626 100%);
-      color: #ffffff;
+      color: #ffffff !important;
       box-shadow: 0 4px 16px rgba(255, 75, 75, 0.35);
     }
 
     .btn-export {
-      background: rgba(255, 255, 255, 0.06);
-      color: var(--text-main);
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      margin-top: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main) !important;
+      border: 1px solid rgba(255, 255, 255, 0.18);
     }
 
     .btn-export:hover {
-      background: rgba(255, 255, 255, 0.12);
-      border-color: rgba(255, 255, 255, 0.25);
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 255, 255, 0.3);
     }
 
     .btn:disabled {
-      background: rgba(255, 255, 255, 0.08) !important;
-      color: var(--text-dim) !important;
-      border: none !important;
+      background: rgba(255, 255, 255, 0.05) !important;
+      color: rgba(255, 255, 255, 0.4) !important;
+      border: 1px dashed rgba(255, 255, 255, 0.15) !important;
       box-shadow: none !important;
       cursor: not-allowed;
       transform: none !important;
+    }
+
+    .btn-hint {
+      font-size: 10.5px;
+      color: var(--text-muted);
+      text-align: center;
+      margin-top: -4px;
     }
   </style>
 </head>
@@ -824,11 +850,13 @@
     </div>
   </div>
 
-  <!-- Actions -->
-  <button id="openTabBtn" class="btn btn-export" style="display: none;">Open WhatsApp Web</button>
-  <button id="startBtn" class="btn btn-main" disabled>🚀 Start Bulk Sending</button>
-  <button id="stopBtn" class="btn btn-stop" style="display: none;">⏹ Stop Process</button>
-  <button id="exportBtn" class="btn btn-export" style="display: none;">📊 Export Delivery Report (.xlsx)</button>
+  <!-- Actions Container -->
+  <div class="actions-wrapper">
+    <button id="openTabBtn" class="btn btn-openwa" style="display: none;">🌐 Open WhatsApp Web Tab</button>
+    <button id="startBtn" class="btn btn-main" disabled>🚀 Start Bulk Sending</button>
+    <button id="stopBtn" class="btn btn-stop" style="display: none;">⏹ Stop Process</button>
+    <button id="exportBtn" class="btn btn-export" style="display: none;">📊 Export Delivery Report (.xlsx)</button>
+  </div>
 
   <!-- SheetJS local parser -->
   <script src="xlsx.mini.min.js"></script>
