@@ -263,6 +263,50 @@ function parseVCF(vcfText) {
   return parsed;
 }
 
+// Parse Plain Text (.txt) contacts (Line-by-line, comma, colon, tab separated or numbers only)
+function parseTXT(text) {
+  const lines = text.split(/\r?\n/);
+  const parsed = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i].trim();
+    if (!rawLine || rawLine.startsWith("#") || rawLine.startsWith("//")) continue;
+
+    let name = "Customer";
+    let rawPhone = rawLine;
+
+    // Check if line contains separator: comma, colon, pipe, or tab
+    if (/[,\t:|]/.test(rawLine)) {
+      const parts = rawLine.split(/[,\t:|]/);
+      // Case A: Name, Phone (or Phone, Name)
+      if (parts.length >= 2) {
+        const part0Clean = sanitizePhoneNumber(parts[0]);
+        const part1Clean = sanitizePhoneNumber(parts[1]);
+
+        if (part0Clean.length >= 8) {
+          rawPhone = parts[0];
+          name = parts[1].trim() || "Customer";
+        } else if (part1Clean.length >= 8) {
+          name = parts[0].trim() || "Customer";
+          rawPhone = parts[1];
+        }
+      }
+    }
+
+    const cleanPhone = sanitizePhoneNumber(rawPhone);
+    if (cleanPhone && cleanPhone.length >= 8) {
+      parsed.push({
+        Name: name,
+        Phone: cleanPhone,
+        _parsedName: name,
+        _parsedPhone: cleanPhone
+      });
+    }
+  }
+
+  return parsed;
+}
+
 // Process and load contacts array into UI
 function loadContactsIntoUI(parsedRows, fileName) {
   if (!parsedRows || parsedRows.length === 0) {
@@ -314,6 +358,24 @@ fileInput.addEventListener("change", (e) => {
         loadContactsIntoUI(vcfContacts, file.name);
       } catch (err) {
         log("Error parsing .vcf file: " + err.message, "error");
+        console.error(err);
+      }
+    };
+  // CASE 1.5: Plain Text (.txt)
+  if (fileNameLower.endsWith(".txt") || file.type.includes("text/plain")) {
+    const textReader = new FileReader();
+    textReader.onload = (event) => {
+      try {
+        const txtContent = event.target.result;
+        const txtContacts = parseTXT(txtContent);
+        if (!txtContacts || txtContacts.length === 0) {
+          log("No valid phone numbers found in .txt file.", "error");
+          startBtn.disabled = true;
+          return;
+        }
+        loadContactsIntoUI(txtContacts, file.name);
+      } catch (err) {
+        log("Error parsing .txt file: " + err.message, "error");
         console.error(err);
       }
     };
