@@ -375,6 +375,10 @@ fileInput.addEventListener("change", (e) => {
         console.error(err);
       }
     };
+    textReader.readAsText(file);
+    return;
+  }
+
   // CASE 1.5: Plain Text (.txt)
   if (fileNameLower.endsWith(".txt") || file.type.includes("text/plain")) {
     const textReader = new FileReader();
