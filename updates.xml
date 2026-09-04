@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gupdate xmlns="http://www.google.com/update2/response" protocol="2.0">
   <app appid="whatsapp-bulk-sender@maheshpatgar.com">
-    <updatecheck codebase="https://github.com/Maheshpatgar488/Whatsapp-Bulk-Sender-Chrome-Extension-/releases/download/v1.2.2/whatsapp-bulk-sender.zip" version="1.2.8" />
+    <updatecheck codebase="https://raw.githubusercontent.com/Maheshpatgar488/Whatsapp-Bulk-Sender-Chrome-Extension-/main/whatsapp-bulk-sender.zip" version="1.2.8" />
   </app>
 </gupdate>
