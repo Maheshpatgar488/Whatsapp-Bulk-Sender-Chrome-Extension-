@@ -1063,6 +1063,12 @@
     <button id="exportBtn" class="btn btn-export" style="display: none;">📊 Export Delivery Report (.xlsx)</button>
   </div>
 
+  <!-- Notification Toast Banner -->
+  <div id="notificationToast" style="display: none; background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: #ffffff; padding: 10px 14px; border-radius: 10px; margin-bottom: 12px; font-size: 11.5px; font-weight: 700; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4); align-items: center; justify-content: space-between;">
+    <span id="toastMsg">🎉 Subscription Successfully Activated!</span>
+    <span id="closeToastBtn" style="cursor: pointer; font-size: 14px; margin-left: 8px;">✕</span>
+  </div>
+
   <!-- Quota Exceeded & Subscription Modal -->
   <div class="modal-overlay" id="quotaModal">
     <div class="modal-card">
@@ -1091,9 +1097,11 @@
       </div>
 
       <div class="upi-info-box">
-        <div style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Scan / Pay via any UPI App (GPay, PhonePe, Paytm):</div>
+        <div style="font-size: 11px; color: var(--text-muted); font-weight: 600; margin-bottom: 6px;">Scan QR Code or Pay via UPI:</div>
+        <img id="upiQrCodeImg" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=upi://pay?pa=maheshpatgar@upi%26pn=Mahesh%20Patgar%26am=749%26cu=INR" alt="UPI QR Code" style="width: 130px; height: 130px; border-radius: 8px; border: 2px solid #00A884; margin-bottom: 6px; background: #ffffff; padding: 4px;" />
         <div class="upi-id-text">maheshpatgar@upi</div>
-        <div style="font-size: 10px; color: var(--primary); font-weight: 700; margin-top: 2px;">Name: Mahesh Patgar</div>
+        <div style="font-size: 10.5px; color: var(--primary); font-weight: 700; margin-top: 2px;">Name: Mahesh Patgar</div>
+        <a id="directUpiPayBtn" href="upi://pay?pa=maheshpatgar@upi&pn=Mahesh%20Patgar&am=749&cu=INR" style="display: inline-block; margin-top: 6px; font-size: 11px; font-weight: 700; color: #38BDF8; text-decoration: underline;">📲 Tap to Pay directly in GPay/PhonePe</a>
       </div>
 
       <input type="text" id="utrInput" class="utr-input" placeholder="Enter 12-digit UTR / Transaction ID" />

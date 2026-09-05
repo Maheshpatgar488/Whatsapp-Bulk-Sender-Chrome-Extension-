@@ -958,6 +958,27 @@ function checkCanSend(isMediaAttached) {
 }
 
 // Modal Event Listeners
+const upiQrCodeImg = document.getElementById("upiQrCodeImg");
+const directUpiPayBtn = document.getElementById("directUpiPayBtn");
+const notificationToast = document.getElementById("notificationToast");
+const toastMsg = document.getElementById("toastMsg");
+const closeToastBtn = document.getElementById("closeToastBtn");
+
+if (closeToastBtn) {
+  closeToastBtn.addEventListener("click", () => {
+    if (notificationToast) notificationToast.style.display = "none";
+  });
+}
+
+function showToastNotification(msg) {
+  if (!notificationToast || !toastMsg) return;
+  toastMsg.textContent = msg;
+  notificationToast.style.display = "flex";
+  setTimeout(() => {
+    notificationToast.style.display = "none";
+  }, 6000);
+}
+
 openRenewModalBtn.addEventListener("click", () => {
   openQuotaModal("Upgrade or extend your active subscription plan below:");
 });
@@ -975,12 +996,16 @@ plan3mBox.addEventListener("click", () => {
   selectedModalPlan = "3_month";
   plan3mBox.classList.add("active");
   plan6mBox.classList.remove("active");
+  if (upiQrCodeImg) upiQrCodeImg.src = "https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=upi://pay?pa=maheshpatgar@upi%26pn=Mahesh%20Patgar%26am=749%26cu=INR";
+  if (directUpiPayBtn) directUpiPayBtn.href = "upi://pay?pa=maheshpatgar@upi&pn=Mahesh%20Patgar&am=749&cu=INR";
 });
 
 plan6mBox.addEventListener("click", () => {
   selectedModalPlan = "6_month";
   plan6mBox.classList.add("active");
   plan3mBox.classList.remove("active");
+  if (upiQrCodeImg) upiQrCodeImg.src = "https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=upi://pay?pa=maheshpatgar@upi%26pn=Mahesh%20Patgar%26am=1299%26cu=INR";
+  if (directUpiPayBtn) directUpiPayBtn.href = "upi://pay?pa=maheshpatgar@upi&pn=Mahesh%20Patgar&am=1299&cu=INR";
 });
 
 toggleAdminBoxBtn.addEventListener("click", () => {
@@ -1009,6 +1034,7 @@ notifyOwnerBtn.addEventListener("click", () => {
   const waUrl = `https://wa.me/919876543210?text=${encodeURIComponent(waMsg)}`;
   chrome.tabs.create({ url: waUrl });
   log(`Payment proof submitted for UTR: ${utr}. Opening WhatsApp chat to Owner...`, "success");
+  showToastNotification(`📤 Payment proof sent for UTR ${utr}. Awaiting Owner activation key!`);
 });
 
 // Admin License Key Activation Engine
@@ -1032,6 +1058,7 @@ activateKeyBtn.addEventListener("click", async () => {
     };
     await saveSubscriptionState();
     log("🎉 3-Month Plan Activated! 5,000 Text + 1,000 Media quota refilled.", "success");
+    showToastNotification("🎉 3-Month Plan Successfully Activated! (5,000 Texts + 1,000 Media)");
     alert("🎉 3-Month Plan Successfully Activated!\nQuota: 5,000 Texts + 1,000 Media\nValidity: 90 Days");
     quotaModal.style.display = "none";
   } else if (key === "MP6M-2026" || key === "6MONTH" || key.startsWith("MP6M")) {
@@ -1046,6 +1073,7 @@ activateKeyBtn.addEventListener("click", async () => {
     };
     await saveSubscriptionState();
     log("🎉 6-Month Plan Activated! 12,000 Text + 3,000 Media quota refilled.", "success");
+    showToastNotification("🎉 6-Month Plan Successfully Activated! (12,000 Texts + 3,000 Media)");
     alert("🎉 6-Month Plan Successfully Activated!\nQuota: 12,000 Texts + 3,000 Media\nValidity: 180 Days");
     quotaModal.style.display = "none";
   } else if (key === "MPTEST" || key === "RESET") {
@@ -1060,6 +1088,7 @@ activateKeyBtn.addEventListener("click", async () => {
     };
     await saveSubscriptionState();
     log("Quota reset to full by Admin key.", "success");
+    showToastNotification("🎉 Quota Successfully Reset!");
     alert("Quota successfully reset!");
     quotaModal.style.display = "none";
   } else {
