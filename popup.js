@@ -37,8 +37,34 @@ const livePreviewBubble = document.getElementById("livePreviewBubble");
 const previewTime = document.getElementById("previewTime");
 const dropzoneText = document.getElementById("dropzoneText");
 
+// Quota & Subscription DOM Elements
+const planBadge = document.getElementById("planBadge");
+const planExpiryLabel = document.getElementById("planExpiryLabel");
+const textQuotaCount = document.getElementById("textQuotaCount");
+const textQuotaFill = document.getElementById("textQuotaFill");
+const mediaQuotaCount = document.getElementById("mediaQuotaCount");
+const mediaQuotaFill = document.getElementById("mediaQuotaFill");
+const openRenewModalBtn = document.getElementById("openRenewModalBtn");
+
+const quotaModal = document.getElementById("quotaModal");
+const modalSubtitle = document.getElementById("modalSubtitle");
+const plan3mBox = document.getElementById("plan3mBox");
+const plan6mBox = document.getElementById("plan6mBox");
+const utrInput = document.getElementById("utrInput");
+const userNameInput = document.getElementById("userNameInput");
+const notifyOwnerBtn = document.getElementById("notifyOwnerBtn");
+const toggleAdminBoxBtn = document.getElementById("toggleAdminBoxBtn");
+const adminKeyBox = document.getElementById("adminKeyBox");
+const adminKeyInput = document.getElementById("adminKeyInput");
+const activateKeyBtn = document.getElementById("activateKeyBtn");
+const closeModalBtn = document.getElementById("closeModalBtn");
+
+let currentSubscription = null;
+let selectedModalPlan = "3_month";
+
 // Check WhatsApp Web Tab Status on load
 checkWhatsAppTab();
+loadSubscriptionState();
 
 // Initial button label & Live Preview Initialization
 updateModeButton();
@@ -593,6 +619,14 @@ startBtn.addEventListener("click", async () => {
     return;
   }
 
+  // Quota check before starting
+  const quotaCheck = checkCanSend(!!attachedMedia);
+  if (!quotaCheck.allowed) {
+    log(`❌ Sending Blocked: ${quotaCheck.reason}`, "error");
+    openQuotaModal(quotaCheck.reason);
+    return;
+  }
+
   let tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   let activeTab = tabs[0];
 
@@ -636,6 +670,14 @@ startBtn.addEventListener("click", async () => {
       break;
     }
 
+    // Check quota before each contact
+    const checkEach = checkCanSend(!!attachedMedia);
+    if (!checkEach.allowed) {
+      log(`❌ Campaign paused at contact ${i + 1}/${contacts.length}: ${checkEach.reason}`, "error");
+      openQuotaModal(checkEach.reason);
+      break;
+    }
+
     const contact = contacts[i];
     const personalizedMessage = buildMessage(template, contact);
 
@@ -657,6 +699,13 @@ startBtn.addEventListener("click", async () => {
         SentMessage: personalizedMessage
       });
       log(`✓ [Simulated OK] ${contact._parsedName}`, "success");
+
+      // Deduct Quota
+      if (currentSubscription) {
+        currentSubscription.textUsed += 1;
+        if (attachedMedia) currentSubscription.mediaUsed += 1;
+        saveSubscriptionState();
+      }
     } else {
       // Live Sending Flow
       log(`(${i + 1}/${contacts.length}) Opening chat for ${contact._parsedName} (+${contact._parsedPhone})...`, "info");
@@ -693,6 +742,13 @@ startBtn.addEventListener("click", async () => {
             SentMessage: personalizedMessage
           });
           log(`✓ Sent successfully to ${contact._parsedName} (${resultObj.details})`, "success");
+
+          // Deduct Quota
+          if (currentSubscription) {
+            currentSubscription.textUsed += 1;
+            if (attachedMedia) currentSubscription.mediaUsed += 1;
+            saveSubscriptionState();
+          }
         } else {
           const errMsg = resultObj && resultObj.error ? resultObj.error : "Failed to click send button on WhatsApp Web";
           throw new Error(errMsg);
@@ -778,4 +834,235 @@ exportBtn.addEventListener("click", () => {
   XLSX.writeFile(workbook, filename);
   
   log(`Downloaded delivery report: ${filename}`, "success");
+});
+
+// ==========================================
+// QUOTA & SUBSCRIPTION MANAGEMENT ENGINE
+// ==========================================
+
+const DEFAULT_SUB = {
+  plan: "3_month",
+  planName: "3-Month Plan",
+  textQuota: 5000,
+  textUsed: 0,
+  mediaQuota: 1000,
+  mediaUsed: 0,
+  expiryDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString()
+};
+
+async function loadSubscriptionState() {
+  try {
+    const data = await chrome.storage.local.get("subData");
+    if (data && data.subData) {
+      currentSubscription = data.subData;
+    } else {
+      currentSubscription = { ...DEFAULT_SUB };
+      await chrome.storage.local.set({ subData: currentSubscription });
+    }
+    updateQuotaUI();
+  } catch (err) {
+    console.error("Error loading subscription data:", err);
+    currentSubscription = { ...DEFAULT_SUB };
+    updateQuotaUI();
+  }
+}
+
+async function saveSubscriptionState() {
+  if (!currentSubscription) return;
+  try {
+    await chrome.storage.local.set({ subData: currentSubscription });
+    updateQuotaUI();
+  } catch (err) {
+    console.error("Error saving subscription data:", err);
+  }
+}
+
+function updateQuotaUI() {
+  if (!currentSubscription) return;
+
+  const now = new Date();
+  const expiry = new Date(currentSubscription.expiryDate);
+  const diffDays = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));
+
+  if (diffDays <= 0) {
+    planBadge.textContent = "Plan Expired";
+    planBadge.style.background = "rgba(255, 75, 75, 0.2)";
+    planBadge.style.color = "var(--danger)";
+    planBadge.style.borderColor = "rgba(255, 75, 75, 0.4)";
+    planExpiryLabel.textContent = "Expired on " + expiry.toLocaleDateString();
+  } else {
+    planBadge.textContent = currentSubscription.planName || "3-Month Plan";
+    planBadge.style.background = "rgba(0, 168, 132, 0.2)";
+    planBadge.style.color = "#00A884";
+    planBadge.style.borderColor = "rgba(0, 168, 132, 0.4)";
+    planExpiryLabel.textContent = `Expires in ${diffDays} Days`;
+  }
+
+  // Text Quota Calc
+  const textRem = Math.max(0, currentSubscription.textQuota - currentSubscription.textUsed);
+  textQuotaCount.textContent = `${textRem.toLocaleString()} / ${currentSubscription.textQuota.toLocaleString()}`;
+  const textPct = Math.min(100, Math.max(0, (textRem / currentSubscription.textQuota) * 100));
+  textQuotaFill.style.width = `${textPct}%`;
+
+  if (textPct < 15) {
+    textQuotaFill.style.background = "var(--danger)";
+  } else {
+    textQuotaFill.style.background = "var(--primary-gradient)";
+  }
+
+  // Media Quota Calc
+  const mediaRem = Math.max(0, currentSubscription.mediaQuota - currentSubscription.mediaUsed);
+  mediaQuotaCount.textContent = `${mediaRem.toLocaleString()} / ${currentSubscription.mediaQuota.toLocaleString()}`;
+  const mediaPct = Math.min(100, Math.max(0, (mediaRem / currentSubscription.mediaQuota) * 100));
+  mediaQuotaFill.style.width = `${mediaPct}%`;
+
+  if (mediaPct < 15) {
+    mediaQuotaFill.style.background = "var(--danger)";
+  } else {
+    mediaQuotaFill.style.background = "var(--primary-gradient)";
+  }
+}
+
+function checkCanSend(isMediaAttached) {
+  if (!currentSubscription) return { allowed: true };
+
+  const now = new Date();
+  const expiry = new Date(currentSubscription.expiryDate);
+
+  if (now > expiry) {
+    return {
+      allowed: false,
+      reason: "Your subscription plan has expired. Please renew your plan to continue bulk sending."
+    };
+  }
+
+  const textRem = currentSubscription.textQuota - currentSubscription.textUsed;
+  if (textRem <= 0) {
+    return {
+      allowed: false,
+      reason: "You have used 100% of your Text Message Quota. Upgrade your plan to unlock more messages."
+    };
+  }
+
+  if (isMediaAttached) {
+    const mediaRem = currentSubscription.mediaQuota - currentSubscription.mediaUsed;
+    if (mediaRem <= 0) {
+      return {
+        allowed: false,
+        reason: "You have used 100% of your Media/PDF Attachment Quota. Upgrade your plan to send media."
+      };
+    }
+  }
+
+  return { allowed: true };
+}
+
+// Modal Event Listeners
+openRenewModalBtn.addEventListener("click", () => {
+  openQuotaModal("Upgrade or extend your active subscription plan below:");
+});
+
+closeModalBtn.addEventListener("click", () => {
+  quotaModal.style.display = "none";
+});
+
+function openQuotaModal(msg) {
+  if (modalSubtitle) modalSubtitle.textContent = msg || "Your active sending quota has been reached or your plan needs activation.";
+  quotaModal.style.display = "flex";
+}
+
+plan3mBox.addEventListener("click", () => {
+  selectedModalPlan = "3_month";
+  plan3mBox.classList.add("active");
+  plan6mBox.classList.remove("active");
+});
+
+plan6mBox.addEventListener("click", () => {
+  selectedModalPlan = "6_month";
+  plan6mBox.classList.add("active");
+  plan3mBox.classList.remove("active");
+});
+
+toggleAdminBoxBtn.addEventListener("click", () => {
+  if (adminKeyBox.style.display === "block") {
+    adminKeyBox.style.display = "none";
+  } else {
+    adminKeyBox.style.display = "block";
+    adminKeyInput.focus();
+  }
+});
+
+// Notify Owner on WhatsApp with UTR Proof
+notifyOwnerBtn.addEventListener("click", () => {
+  const utr = utrInput.value.trim();
+  const name = userNameInput.value.trim() || "Valued Customer";
+
+  if (!utr || utr.length < 4) {
+    alert("Please enter your 12-digit UTR / Transaction ID before submitting.");
+    utrInput.focus();
+    return;
+  }
+
+  const planName = selectedModalPlan === "6_month" ? "6-Month Plan (₹1,299)" : "3-Month Plan (₹749)";
+  const waMsg = `*WhatsApp Bulk Sender - Subscription Renewal Request*\n\n📌 *Chosen Plan*: ${planName}\n💳 *UTR/Txn ID*: ${utr}\n👤 *Name/Phone*: ${name}\n\n_Please verify payment and send my License Activation Key!_`;
+
+  const waUrl = `https://wa.me/919876543210?text=${encodeURIComponent(waMsg)}`;
+  chrome.tabs.create({ url: waUrl });
+  log(`Payment proof submitted for UTR: ${utr}. Opening WhatsApp chat to Owner...`, "success");
+});
+
+// Admin License Key Activation Engine
+activateKeyBtn.addEventListener("click", async () => {
+  const key = adminKeyInput.value.trim().toUpperCase();
+  if (!key) {
+    alert("Please enter a valid License Activation Key.");
+    adminKeyInput.focus();
+    return;
+  }
+
+  if (key === "MP3M-2026" || key === "3MONTH" || key.startsWith("MP3M")) {
+    currentSubscription = {
+      plan: "3_month",
+      planName: "3-Month Plan",
+      textQuota: 5000,
+      textUsed: 0,
+      mediaQuota: 1000,
+      mediaUsed: 0,
+      expiryDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString()
+    };
+    await saveSubscriptionState();
+    log("🎉 3-Month Plan Activated! 5,000 Text + 1,000 Media quota refilled.", "success");
+    alert("🎉 3-Month Plan Successfully Activated!\nQuota: 5,000 Texts + 1,000 Media\nValidity: 90 Days");
+    quotaModal.style.display = "none";
+  } else if (key === "MP6M-2026" || key === "6MONTH" || key.startsWith("MP6M")) {
+    currentSubscription = {
+      plan: "6_month",
+      planName: "6-Month Plan",
+      textQuota: 12000,
+      textUsed: 0,
+      mediaQuota: 3000,
+      mediaUsed: 0,
+      expiryDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString()
+    };
+    await saveSubscriptionState();
+    log("🎉 6-Month Plan Activated! 12,000 Text + 3,000 Media quota refilled.", "success");
+    alert("🎉 6-Month Plan Successfully Activated!\nQuota: 12,000 Texts + 3,000 Media\nValidity: 180 Days");
+    quotaModal.style.display = "none";
+  } else if (key === "MPTEST" || key === "RESET") {
+    currentSubscription = {
+      plan: "3_month",
+      planName: "3-Month Plan (Refilled)",
+      textQuota: 5000,
+      textUsed: 0,
+      mediaQuota: 1000,
+      mediaUsed: 0,
+      expiryDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString()
+    };
+    await saveSubscriptionState();
+    log("Quota reset to full by Admin key.", "success");
+    alert("Quota successfully reset!");
+    quotaModal.style.display = "none";
+  } else {
+    alert("Invalid License Key. Please contact Mahesh Patgar for a valid key.");
+  }
 });
