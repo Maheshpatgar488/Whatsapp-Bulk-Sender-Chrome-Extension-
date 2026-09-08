@@ -847,7 +847,7 @@ startBtn.addEventListener("click", async () => {
     }
 
     const contact = contacts[i];
-    const personalizedMessage = personalizeMessage(template, contact);
+    const personalizedMessage = buildMessage(template, contact);
 
     if (isSafeMode) {
       // Safe Mode (Dry Run)
