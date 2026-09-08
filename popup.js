@@ -606,28 +606,26 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         }
       }
 
-      // 3. Check for Media / Document Preview Modal (if media was attached)
+      // 3. Check for Media / Document Preview Modal (when media is attached)
       const previewModal = document.querySelector('div[data-animate-modal-popup="true"]') ||
                            document.querySelector('div[data-testid="media-editor-container"]') ||
                            document.querySelector('div[data-testid="document-editor"]') ||
-                           document.querySelector('div[aria-label="Send"][role="button"]')?.closest('div[role="dialog"]');
+                           document.querySelector('div[role="dialog"]');
 
-      if (previewModal || (hasInjectedMedia && elapsed > 1500)) {
-        const modalSendBtn = document.querySelector('div[data-animate-modal-popup="true"] span[data-icon="send"]')?.closest("button") ||
-                             document.querySelector('div[data-animate-modal-popup="true"] span[data-icon="send"]')?.closest('div[role="button"]') ||
-                             document.querySelector('span[data-icon="send"]')?.closest("button") ||
-                             document.querySelector('span[data-icon="send"]')?.closest('div[role="button"]') ||
-                             document.querySelector('span[data-icon="send-light"]')?.closest("button") ||
-                             document.querySelector('div[aria-label="Send"][role="button"]') ||
-                             document.querySelector('button[aria-label="Send"]');
+      if (previewModal) {
+        const modalSendBtn = previewModal.querySelector('span[data-icon="send"]')?.closest("button") ||
+                             previewModal.querySelector('span[data-icon="send"]')?.closest('div[role="button"]') ||
+                             previewModal.querySelector('span[data-icon="send"]') ||
+                             previewModal.querySelector('span[data-icon="send-light"]')?.closest("button") ||
+                             previewModal.querySelector('div[aria-label="Send"][role="button"]') ||
+                             previewModal.querySelector('button[aria-label="Send"]');
 
-        if (modalSendBtn && (hasInjectedMedia || previewModal)) {
+        if (modalSendBtn) {
           clearInterval(timer);
 
           // Add caption if provided
           if (captionText && captionText.trim().length > 0) {
-            const captionBox = document.querySelector('div[data-animate-modal-popup="true"] div[contenteditable="true"]') ||
-                               document.querySelector('div[contenteditable="true"]');
+            const captionBox = previewModal.querySelector('div[contenteditable="true"]');
             if (captionBox) {
               captionBox.focus();
               document.execCommand("insertText", false, captionText);
