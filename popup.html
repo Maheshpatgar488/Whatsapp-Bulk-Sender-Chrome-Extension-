@@ -34,7 +34,7 @@
     }
 
     body {
-      width: 420px;
+      width: 440px;
       padding: 16px;
       background-color: var(--bg-dark);
       color: var(--text-main);
@@ -62,6 +62,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 8px;
       margin-bottom: 14px;
       padding-bottom: 12px;
       border-bottom: 1px solid rgba(134, 150, 160, 0.15);
@@ -71,6 +72,7 @@
       display: flex;
       align-items: center;
       gap: 10px;
+      flex-shrink: 0;
     }
 
     .brand-icon {
@@ -82,6 +84,7 @@
       align-items: center;
       justify-content: center;
       box-shadow: 0 0 12px var(--accent-glow);
+      flex-shrink: 0;
     }
 
     .brand-icon svg {
@@ -91,32 +94,74 @@
     }
 
     .brand-text h1 {
-      font-size: 15px;
+      font-size: 14.5px;
       font-weight: 800;
       letter-spacing: -0.2px;
       color: #ffffff;
       display: flex;
       align-items: center;
       gap: 6px;
+      white-space: nowrap;
+      margin: 0;
+      line-height: 1.2;
     }
 
     .brand-text p {
-      font-size: 11px;
+      font-size: 10.5px;
       color: var(--text-muted);
       font-weight: 500;
+      white-space: nowrap;
+      margin: 0;
+      line-height: 1.2;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .popout-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 6px;
+      color: var(--text-main);
+      cursor: pointer;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: all 0.2s ease;
+      height: 26px;
+      line-height: 1;
+    }
+
+    .popout-btn:hover {
+      background: rgba(255, 255, 255, 0.16);
+      border-color: rgba(255, 255, 255, 0.28);
+      color: #ffffff;
     }
 
     .status-pill {
       font-size: 10.5px;
       font-weight: 700;
-      padding: 4px 10px;
+      padding: 4px 9px;
       border-radius: 20px;
-      display: flex;
+      display: inline-flex;
       align-items: center;
       gap: 6px;
       background: rgba(0, 168, 132, 0.12);
       color: var(--primary);
       border: 1px solid rgba(0, 168, 132, 0.3);
+      white-space: nowrap;
+      flex-shrink: 0;
+      height: 26px;
+      line-height: 1;
     }
 
     .pulse-dot {
@@ -911,11 +956,16 @@
         <p>Bulk Automation Engine</p>
       </div>
     </div>
-    <div style="display: flex; align-items: center; gap: 6px;">
-      <button id="popoutBtn" title="Pop out into separate window so it never closes" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.18); border-radius: 6px; color: var(--text-main); cursor: pointer; padding: 4px 8px; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; gap: 4px; transition: all 0.2s;">🗗 Pop out</button>
+    <div class="header-actions">
+      <button id="popoutBtn" class="popout-btn" title="Pop out into separate window so it never closes">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M15 3h6v6M10 14L21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+        </svg>
+        <span>Pop out</span>
+      </button>
       <div class="status-pill" id="tabStatus" style="background: rgba(255, 95, 86, 0.15); border: 1px solid rgba(255, 95, 86, 0.3);">
         <span class="pulse-dot" style="background: #FF5F56;"></span>
-        <span style="color: #FF5F56; font-weight: 700;">WhatsApp Disconnected</span>
+        <span style="color: #FF5F56; font-weight: 700; white-space: nowrap;">Disconnected</span>
       </div>
     </div>
   </div>

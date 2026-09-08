@@ -133,7 +133,7 @@ async function checkWhatsAppTab() {
 
     if (isWaOpen) {
       if (tabStatus) {
-        tabStatus.innerHTML = `<span class="pulse-dot" style="background: #27C93F;"></span><span style="color: #27C93F; font-weight: 700;">WhatsApp Connected ${isCurrentTabWa ? '' : '(Tab Open)'}</span>`;
+        tabStatus.innerHTML = `<span class="pulse-dot" style="background: #27C93F;"></span><span style="color: #27C93F; font-weight: 700; white-space: nowrap;">Connected</span>`;
         tabStatus.style.background = "rgba(39, 201, 63, 0.15)";
         tabStatus.style.border = "1px solid rgba(39, 201, 63, 0.3)";
       }
@@ -147,7 +147,7 @@ async function checkWhatsAppTab() {
       }
     } else {
       if (tabStatus) {
-        tabStatus.innerHTML = `<span class="pulse-dot" style="background: #FF5F56;"></span><span style="color: #FF5F56; font-weight: 700;">WhatsApp Disconnected</span>`;
+        tabStatus.innerHTML = `<span class="pulse-dot" style="background: #FF5F56;"></span><span style="color: #FF5F56; font-weight: 700; white-space: nowrap;">Disconnected</span>`;
         tabStatus.style.background = "rgba(255, 95, 86, 0.15)";
         tabStatus.style.border = "1px solid rgba(255, 95, 86, 0.3)";
       }
@@ -159,7 +159,7 @@ async function checkWhatsAppTab() {
   } catch (e) {
     console.error("Tab check error:", e);
     if (tabStatus) {
-      tabStatus.innerHTML = `<span class="pulse-dot" style="background: #FF5F56;"></span><span style="color: #FF5F56; font-weight: 700;">WhatsApp Disconnected</span>`;
+      tabStatus.innerHTML = `<span class="pulse-dot" style="background: #FF5F56;"></span><span style="color: #FF5F56; font-weight: 700; white-space: nowrap;">Disconnected</span>`;
       tabStatus.style.background = "rgba(255, 95, 86, 0.15)";
       tabStatus.style.border = "1px solid rgba(255, 95, 86, 0.3)";
     }
