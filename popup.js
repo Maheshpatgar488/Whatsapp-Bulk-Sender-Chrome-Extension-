@@ -515,6 +515,19 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
     let isInjectingMedia = false;
     let mediaAttemptTime = 0;
 
+    // Helper: Synthetic MouseEvent trigger for React / Web Components
+    function clickElement(el) {
+      if (!el) return;
+      const opts = { bubbles: true, cancelable: true, view: window };
+      try { el.dispatchEvent(new MouseEvent("pointerdown", opts)); } catch (e) {}
+      try { el.dispatchEvent(new MouseEvent("mousedown", opts)); } catch (e) {}
+      try { el.dispatchEvent(new MouseEvent("mouseup", opts)); } catch (e) {}
+      try { el.dispatchEvent(new MouseEvent("click", opts)); } catch (e) {}
+      if (typeof el.click === "function") {
+        try { el.click(); } catch (e) {}
+      }
+    }
+
     // Helper: Convert base64 DataURL back to a DOM File object synchronously (100% CSP safe)
     function createDOMFile(base64Data, name, type) {
       try {
@@ -550,7 +563,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         ) {
           clearInterval(timer);
           const okBtn = modal.querySelector("button");
-          if (okBtn) okBtn.click();
+          clickElement(okBtn);
           return resolve({ success: false, error: "Invalid WhatsApp Number / Not on WhatsApp" });
         }
       }
@@ -580,7 +593,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
                                document.querySelector('footer span[data-icon="plus"]');
 
             if (attachBtn) {
-              attachBtn.click();
+              clickElement(attachBtn);
               await new Promise((r) => setTimeout(r, 350));
 
               // Click Document / Image item in dropdown if present
@@ -593,7 +606,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
                                document.querySelector('span[data-icon="attach-image"]')?.closest("button") ||
                                document.querySelector('span[data-icon="image"]')?.closest("li"));
 
-              if (docItem) docItem.click();
+              if (docItem) clickElement(docItem);
               await new Promise((r) => setTimeout(r, 350));
               fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
             }
@@ -615,13 +628,24 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
               }
 
               if (targetInput) {
-                targetInput.focus();
-                const dt = new DataTransfer();
-                dt.items.add(fileObj);
-                targetInput.files = dt.files;
-                targetInput.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
-                targetInput.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
-                hasInjectedMedia = true;
+                try {
+                  targetInput.focus();
+                  const dt = new DataTransfer();
+                  dt.items.add(fileObj);
+                  
+                  try {
+                    Object.defineProperty(targetInput, "files", { value: dt.files, writable: true, configurable: true });
+                  } catch (e) {
+                    targetInput.files = dt.files;
+                  }
+
+                  const evtOpts = { bubbles: true, cancelable: true };
+                  targetInput.dispatchEvent(new Event("change", evtOpts));
+                  targetInput.dispatchEvent(new Event("input", evtOpts));
+                  hasInjectedMedia = true;
+                } catch (err) {
+                  console.error("Target input dispatch error:", err);
+                }
               }
             }
           }
@@ -656,7 +680,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
 
             setTimeout(() => {
               const btn = modalSendBtn.tagName === "BUTTON" ? modalSendBtn : modalSendBtn.closest("button") || modalSendBtn.closest('div[role="button"]') || modalSendBtn;
-              btn.click();
+              clickElement(btn);
               setTimeout(() => resolve({ success: true, details: "Media / PDF Document Dispatched" }), 2000);
             }, 600);
             return;
