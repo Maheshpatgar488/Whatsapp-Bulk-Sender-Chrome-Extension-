@@ -214,9 +214,11 @@ mediaFile.addEventListener("change", (e) => {
 
   const reader = new FileReader();
   reader.onload = (event) => {
+    const isTextFile = file.name.endsWith(".txt") || file.name.endsWith(".text") || file.name.endsWith(".log") || file.name.endsWith(".md") || file.type.includes("text");
+
     attachedMedia = {
       name: file.name,
-      type: file.type || "application/octet-stream",
+      type: file.type || (isTextFile ? "text/plain" : "application/octet-stream"),
       size: file.size,
       base64: event.target.result
     };
@@ -234,6 +236,7 @@ mediaFile.addEventListener("change", (e) => {
       mediaIcon.style.display = "inline";
       if (file.type.includes("video")) mediaIcon.textContent = "🎥";
       else if (file.type.includes("pdf")) mediaIcon.textContent = "📕";
+      else if (isTextFile) mediaIcon.textContent = "📝";
       else mediaIcon.textContent = "📄";
     }
 
