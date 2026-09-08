@@ -726,57 +726,65 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
             return;
           }
 
-          // B. TRIGGER FILE ATTACHMENT VIA ALL AVAILABLE CHANNELS
-          const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
+          // B. TRIGGER FILE ATTACHMENT ONCE IF NOT YET INJECTED
+          if (!fileInjected) {
+            fileInjected = true; // Mark injected so it fires ONCE on tick 1
+            const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
 
-          // Channel 1: Clipboard Paste Event
-          pasteFileToWhatsAppInput(fileObj);
+            // Channel 1: Clipboard Paste Event
+            pasteFileToWhatsAppInput(fileObj);
 
-          // Channel 2: Drag & Drop Event
-          dropFileOnWhatsApp(fileObj);
+            // Channel 2: Drag & Drop Event
+            dropFileOnWhatsApp(fileObj);
 
-          // Channel 3: Input File Injection if input exists
-          const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-          const targetInput = fileInputs.find(i => isDocument ? (i.accept === "*" || i.accept.includes("*/*") || !i.accept.includes("image")) : (i.accept.includes("image") || i.accept === "*")) || fileInputs[fileInputs.length - 1] || fileInputs[0];
-          if (targetInput) {
-            injectFileIntoInput(targetInput, fileObj);
-          }
+            // Channel 3: Input File Injection if input exists
+            const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+            const targetInput = fileInputs.find(i => isDocument ? (i.accept === "*" || i.accept.includes("*/*") || !i.accept.includes("image")) : (i.accept.includes("image") || i.accept === "*")) || fileInputs[fileInputs.length - 1] || fileInputs[0];
+            if (targetInput) {
+              injectFileIntoInput(targetInput, fileObj);
+            }
 
-          // Channel 4: Attach Menu Click
-          const openMenu = document.querySelector('div[data-testid="attach-menu-popover"]') ||
-                           document.querySelector('div[data-animate-dropdown-item="true"]') ||
-                           document.querySelector('ul[role="menu"]') ||
-                           document.querySelector('div[role="application"]');
+            // Channel 4: Attach Menu Click
+            const openMenu = document.querySelector('div[data-testid="attach-menu-popover"]') ||
+                             document.querySelector('div[data-animate-dropdown-item="true"]') ||
+                             document.querySelector('ul[role="menu"]') ||
+                             document.querySelector('div[role="application"]');
 
-          if (openMenu) {
-            const menuBtn = isDocument
-              ? openMenu.querySelector('button[aria-label="Document"]') ||
-                openMenu.querySelector('[aria-label="Document"]') ||
-                document.querySelector('[aria-label="Document"]') ||
-                openMenu.querySelector('span[data-icon="attach-document"]')?.closest('[role="button"], button, li') ||
-                openMenu.querySelector('span[data-icon="document"]')?.closest('[role="button"], button, li') ||
-                Array.from(openMenu.querySelectorAll("li, button, [role=button]")).find(el => /document/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()))
-              : openMenu.querySelector('button[aria-label="Photos & videos"]') ||
-                openMenu.querySelector('[aria-label="Photos & videos"]') ||
-                document.querySelector('[aria-label="Photos & videos"]') ||
-                openMenu.querySelector('span[data-icon="attach-image"]')?.closest('[role="button"], button, li') ||
-                openMenu.querySelector('span[data-icon="image"]')?.closest('[role="button"], button, li') ||
-                Array.from(openMenu.querySelectorAll("li, button, [role=button]")).find(el => /photo|image/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()));
+            if (openMenu) {
+              const menuBtn = isDocument
+                ? openMenu.querySelector('button[aria-label="Document"]') ||
+                  openMenu.querySelector('[aria-label="Document"]') ||
+                  document.querySelector('[aria-label="Document"]') ||
+                  openMenu.querySelector('span[data-icon="attach-document"]')?.closest('[role="button"], button, li') ||
+                  openMenu.querySelector('span[data-icon="document"]')?.closest('[role="button"], button, li') ||
+                  Array.from(openMenu.querySelectorAll("li, button, [role=button]")).find(el => /document/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()))
+                : openMenu.querySelector('button[aria-label="Photos & videos"]') ||
+                  openMenu.querySelector('[aria-label="Photos & videos"]') ||
+                  document.querySelector('[aria-label="Photos & videos"]') ||
+                  openMenu.querySelector('span[data-icon="attach-image"]')?.closest('[role="button"], button, li') ||
+                  openMenu.querySelector('span[data-icon="image"]')?.closest('[role="button"], button, li') ||
+                  Array.from(openMenu.querySelectorAll("li, button, [role=button]")).find(el => /photo|image/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()));
 
-            if (menuBtn) {
-              clickElement(menuBtn);
+              if (menuBtn) {
+                clickElement(menuBtn);
+              }
+            } else {
+              const attachBtn = document.querySelector('footer [aria-label="Attach"]') ||
+                                 document.querySelector('footer [title="Attach"]') ||
+                                 document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
+                                 document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
+                                 document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
+                                 document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]') ||
+                                 Array.from(document.querySelectorAll('footer [role="button"], footer button')).find(el => /attach/i.test(el.getAttribute("aria-label") || el.getAttribute("title") || ""));
+
+              if (attachBtn) {
+                clickElement(attachBtn);
+              }
             }
           } else {
-            const attachBtn = document.querySelector('footer [aria-label="Attach"]') ||
-                               document.querySelector('footer [title="Attach"]') ||
-                               document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
-                               document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
-                               document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
-                               document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]') ||
-                               Array.from(document.querySelectorAll('footer [role="button"], footer button')).find(el => /attach/i.test(el.getAttribute("aria-label") || el.getAttribute("title") || ""));
-
-            if (attachBtn) {
-              clickElement(attachBtn);
+            // If 5 seconds passed without Send button appearing, reset fileInjected to retry
+            if (elapsed % 5000 === 0) {
+              fileInjected = false;
             }
           }
         }
