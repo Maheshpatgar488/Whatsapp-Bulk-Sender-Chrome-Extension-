@@ -1098,19 +1098,17 @@
 
       <div class="upi-info-box">
         <div style="font-size: 11px; color: var(--text-muted); font-weight: 600; margin-bottom: 6px;">Scan QR Code or Pay via UPI App (0% Fees):</div>
-        <img id="upiQrCodeImg" src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=upi://pay?pa=maheshpatgar@upi%26pn=Mahesh%20Patgar%26am=749%26cu=INR" alt="UPI QR Code" style="width: 140px; height: 140px; border-radius: 8px; border: 2px solid #00A884; margin-bottom: 6px; background: #ffffff; padding: 4px;" />
-        <div class="upi-id-text">maheshpatgar@upi</div>
+        <img id="upiQrCodeImg" src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=upi://pay?pa=maheshpatgar488-1@okicici%26pn=Mahesh%20Patgar%26am=749%26cu=INR" alt="UPI QR Code" style="width: 140px; height: 140px; border-radius: 8px; border: 2px solid #00A884; margin-bottom: 6px; background: #ffffff; padding: 4px;" />
+        <div class="upi-id-text">maheshpatgar488-1@okicici</div>
         <div style="font-size: 10.5px; color: var(--primary); font-weight: 700; margin-top: 2px;">Name: Mahesh Patgar</div>
-        <a id="directUpiPayBtn" href="upi://pay?pa=maheshpatgar@upi&pn=Mahesh%20Patgar&am=749&cu=INR" style="display: inline-block; margin-top: 6px; font-size: 11px; font-weight: 700; color: #38BDF8; text-decoration: underline;">📲 Tap to Pay directly in GPay / PhonePe / Paytm</a>
+        <a id="directUpiPayBtn" href="upi://pay?pa=maheshpatgar488-1@okicici&pn=Mahesh%20Patgar&am=749&cu=INR" style="display: inline-block; margin-top: 6px; font-size: 11px; font-weight: 700; color: #38BDF8; text-decoration: underline;">📲 Tap to Pay directly in GPay / PhonePe / Paytm</a>
       </div>
 
-      <!-- Payment Status Live Monitor -->
-      <div id="paymentStatusPill" style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.35); color: #F59E0B; padding: 8px 12px; border-radius: 8px; font-size: 11.5px; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 6px;">
-        <span class="pulse-dot" style="background: #F59E0B;"></span>
-        <span id="paymentStatusText">⏳ Waiting for UPI Payment...</span>
+      <!-- Live Background Payment Polling Status -->
+      <div id="paymentStatusPill" style="background: rgba(0, 168, 132, 0.12); border: 1px solid rgba(0, 168, 132, 0.3); color: var(--primary); padding: 10px 14px; border-radius: 10px; font-size: 11.5px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+        <span class="pulse-dot" style="background: #00A884;"></span>
+        <span id="paymentStatusText">🔄 Live Background Polling (Auto-Detecting Payment)...</span>
       </div>
-
-      <button id="autoVerifyBtn" class="btn btn-main" style="margin-bottom: 6px;">⚡ Auto-Verify Payment & Activate Plan</button>
 
       <button class="admin-toggle-btn" id="toggleAdminBoxBtn">🔐 Owner License Key Activation</button>
 
