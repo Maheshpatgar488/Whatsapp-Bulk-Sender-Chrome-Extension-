@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WhatsApp Business Bulk Sender",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "update_url": "https://raw.githubusercontent.com/Maheshpatgar488/Whatsapp-Bulk-Sender-Chrome-Extension-/main/updates.xml",
   "description": "Send bulk personalized WhatsApp messages from Excel/CSV with placeholder tags, auto-delay pacing, and delivery export.",
   "browser_specific_settings": {

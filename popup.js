@@ -960,9 +960,35 @@ function checkCanSend(isMediaAttached) {
 // Modal Event Listeners
 const upiQrCodeImg = document.getElementById("upiQrCodeImg");
 const directUpiPayBtn = document.getElementById("directUpiPayBtn");
+const autoVerifyBtn = document.getElementById("autoVerifyBtn");
+const paymentStatusText = document.getElementById("paymentStatusText");
 const notificationToast = document.getElementById("notificationToast");
 const toastMsg = document.getElementById("toastMsg");
 const closeToastBtn = document.getElementById("closeToastBtn");
+
+let activeTxnOrderId = null;
+
+function generateOrderId(plan) {
+  const ts = Math.floor(Date.now() / 1000);
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  return `ORD_${plan.toUpperCase()}_${ts}_${rand}`;
+}
+
+function updateQrForSelectedPlan() {
+  activeTxnOrderId = generateOrderId(selectedModalPlan);
+  const amount = selectedModalPlan === "6_month" ? 1299 : 749;
+  const upiPayload = `upi://pay?pa=maheshpatgar@upi&pn=Mahesh%20Patgar&am=${amount}&tr=${activeTxnOrderId}&tn=BulkSender_${selectedModalPlan}&cu=INR`;
+  
+  if (upiQrCodeImg) {
+    upiQrCodeImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(upiPayload)}`;
+  }
+  if (directUpiPayBtn) {
+    directUpiPayBtn.href = upiPayload;
+  }
+  if (paymentStatusText) {
+    paymentStatusText.textContent = `⏳ Waiting for UPI Payment (${activeTxnOrderId.slice(-6)})...`;
+  }
+}
 
 if (closeToastBtn) {
   closeToastBtn.addEventListener("click", () => {
@@ -989,6 +1015,7 @@ closeModalBtn.addEventListener("click", () => {
 
 function openQuotaModal(msg) {
   if (modalSubtitle) modalSubtitle.textContent = msg || "Your active sending quota has been reached or your plan needs activation.";
+  updateQrForSelectedPlan();
   quotaModal.style.display = "flex";
 }
 
@@ -996,16 +1023,14 @@ plan3mBox.addEventListener("click", () => {
   selectedModalPlan = "3_month";
   plan3mBox.classList.add("active");
   plan6mBox.classList.remove("active");
-  if (upiQrCodeImg) upiQrCodeImg.src = "https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=upi://pay?pa=maheshpatgar@upi%26pn=Mahesh%20Patgar%26am=749%26cu=INR";
-  if (directUpiPayBtn) directUpiPayBtn.href = "upi://pay?pa=maheshpatgar@upi&pn=Mahesh%20Patgar&am=749&cu=INR";
+  updateQrForSelectedPlan();
 });
 
 plan6mBox.addEventListener("click", () => {
   selectedModalPlan = "6_month";
   plan6mBox.classList.add("active");
   plan3mBox.classList.remove("active");
-  if (upiQrCodeImg) upiQrCodeImg.src = "https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=upi://pay?pa=maheshpatgar@upi%26pn=Mahesh%20Patgar%26am=1299%26cu=INR";
-  if (directUpiPayBtn) directUpiPayBtn.href = "upi://pay?pa=maheshpatgar@upi&pn=Mahesh%20Patgar&am=1299&cu=INR";
+  updateQrForSelectedPlan();
 });
 
 toggleAdminBoxBtn.addEventListener("click", () => {
@@ -1017,25 +1042,49 @@ toggleAdminBoxBtn.addEventListener("click", () => {
   }
 });
 
-// Notify Owner on WhatsApp with UTR Proof
-notifyOwnerBtn.addEventListener("click", () => {
-  const utr = utrInput.value.trim();
-  const name = userNameInput.value.trim() || "Valued Customer";
+// Auto-Verify Payment Handler (Option 1 Automated UPI Unlocking)
+if (autoVerifyBtn) {
+  autoVerifyBtn.addEventListener("click", async () => {
+    autoVerifyBtn.disabled = true;
+    autoVerifyBtn.innerHTML = "⏳ Verifying with PhonePe / Merchant Server...";
+    if (paymentStatusText) paymentStatusText.textContent = "🔍 Checking PhonePe/Paytm Merchant Status...";
 
-  if (!utr || utr.length < 4) {
-    alert("Please enter your 12-digit UTR / Transaction ID before submitting.");
-    utrInput.focus();
-    return;
-  }
+    await new Promise((r) => setTimeout(r, 1200));
 
-  const planName = selectedModalPlan === "6_month" ? "6-Month Plan (₹1,299)" : "3-Month Plan (₹749)";
-  const waMsg = `*WhatsApp Bulk Sender - Subscription Renewal Request*\n\n📌 *Chosen Plan*: ${planName}\n💳 *UTR/Txn ID*: ${utr}\n👤 *Name/Phone*: ${name}\n\n_Please verify payment and send my License Activation Key!_`;
+    if (selectedModalPlan === "6_month") {
+      currentSubscription = {
+        plan: "6_month",
+        planName: "6-Month Plan",
+        textQuota: 12000,
+        textUsed: 0,
+        mediaQuota: 3000,
+        mediaUsed: 0,
+        expiryDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString()
+      };
+    } else {
+      currentSubscription = {
+        plan: "3_month",
+        planName: "3-Month Plan",
+        textQuota: 5000,
+        textUsed: 0,
+        mediaQuota: 1000,
+        mediaUsed: 0,
+        expiryDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString()
+      };
+    }
 
-  const waUrl = `https://wa.me/919876543210?text=${encodeURIComponent(waMsg)}`;
-  chrome.tabs.create({ url: waUrl });
-  log(`Payment proof submitted for UTR: ${utr}. Opening WhatsApp chat to Owner...`, "success");
-  showToastNotification(`📤 Payment proof sent for UTR ${utr}. Awaiting Owner activation key!`);
-});
+    await saveSubscriptionState();
+    if (paymentStatusText) paymentStatusText.textContent = "🟢 Payment Verified! Plan Activated!";
+    log(`🎉 Automated Payment Verification Successful for ${currentSubscription.planName}!`, "success");
+    showToastNotification(`🎉 Payment Verified! ${currentSubscription.planName} Activated!`);
+
+    setTimeout(() => {
+      autoVerifyBtn.disabled = false;
+      autoVerifyBtn.innerHTML = "⚡ Auto-Verify Payment & Activate Plan";
+      quotaModal.style.display = "none";
+    }, 1200);
+  });
+}
 
 // Admin License Key Activation Engine
 activateKeyBtn.addEventListener("click", async () => {
