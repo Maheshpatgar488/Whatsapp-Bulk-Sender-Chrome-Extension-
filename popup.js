@@ -347,25 +347,30 @@ function parseTXT(text) {
     const rawLine = lines[i].trim();
     if (!rawLine || rawLine.startsWith("#") || rawLine.startsWith("//")) continue;
 
+    // Skip CSV/TXT header row if present (e.g. "Name,Phone" or "Name\tPhone")
+    if (i === 0 && /(name|phone|contact|mobile|number)/i.test(rawLine) && !/\d{5,}/.test(rawLine)) {
+      continue;
+    }
+
     let name = "";
     let rawPhone = "";
 
     // Check if line contains separator: comma, colon, pipe, or tab
     if (/[,\t:|]/.test(rawLine)) {
-      const parts = rawLine.split(/[,\t:|]/);
+      const parts = rawLine.split(/[,\t:|]/).map(p => p.trim());
       if (parts.length >= 2) {
         const part0Clean = sanitizePhoneNumber(parts[0]);
         const part1Clean = sanitizePhoneNumber(parts[1]);
 
         if (part0Clean.length >= 8) {
           rawPhone = parts[0];
-          name = parts[1].trim() || "Customer";
+          name = parts[1] || "Customer";
         } else if (part1Clean.length >= 8) {
-          name = parts[0].trim() || "Customer";
+          name = parts[0] || "Customer";
           rawPhone = parts[1];
         } else {
-          name = parts[0].trim();
-          rawPhone = parts[1].trim();
+          name = parts[0];
+          rawPhone = parts[1];
         }
       }
     } else {
@@ -374,11 +379,14 @@ function parseTXT(text) {
         rawPhone = rawLine;
         name = "Customer";
       } else {
-        // Line is a contact name!
+        // Line is a contact name alone
         name = rawLine;
         rawPhone = "";
       }
     }
+
+    // Ignore lines that are just literal header text
+    if (/^(name|phone|mobile|number)$/i.test(name) && !rawPhone) continue;
 
     const cleanPhone = sanitizePhoneNumber(rawPhone);
     const finalName = name.trim() || (cleanPhone ? "Customer" : "");
@@ -668,17 +676,31 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
 
       // STEP 1: SEARCH CONTACT IN LEFT-HAND SEARCH BAR
       if (step === "SEARCH_CONTACT") {
-        const searchBox = document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
-                          document.querySelector('div[data-testid="chat-list-search"]') ||
-                          document.querySelector('div[role="textbox"][aria-label*="Search"]') ||
-                          document.querySelector('div[role="textbox"][title*="Search"]') ||
-                          document.querySelector('#side div[contenteditable="true"]') ||
-                          document.querySelector('div[role="textbox"]');
+        // Modern WhatsApp Web Search Box selectors
+        const searchBox =
+          document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
+          document.querySelector('#side div[contenteditable="true"]') ||
+          document.querySelector('div[data-testid="chat-list-search"]') ||
+          document.querySelector('div[role="textbox"][aria-label*="Search"]') ||
+          document.querySelector('div[role="textbox"][title*="Search"]') ||
+          document.querySelector('div[aria-label*="Search or start new chat"]') ||
+          document.querySelector('#pane-side')?.parentElement?.querySelector('div[contenteditable="true"]') ||
+          Array.from(document.querySelectorAll('div[contenteditable="true"]')).find(el => {
+            return !el.closest('#main') && !el.closest('footer');
+          }) ||
+          document.querySelector('input[type="text"][placeholder*="Search"]');
 
         if (!searchBox) {
-          if (stepElapsed > 15000) {
+          // If search icon button needs to be clicked first (e.g. collapsed search)
+          const searchTrigger = document.querySelector('button[aria-label*="Search"]') ||
+                                document.querySelector('span[data-icon="search"]')?.closest('button, [role="button"]');
+          if (searchTrigger) {
+            clickElement(searchTrigger);
+          }
+
+          if (stepElapsed > 25000) {
             clearInterval(timer);
-            return resolve({ success: false, error: "WhatsApp Web search box not found. Ensure WhatsApp Web is logged in." });
+            return resolve({ success: false, error: "WhatsApp Web search box not found. Ensure WhatsApp Web is logged in and active." });
           }
           return;
         }
@@ -707,12 +729,14 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
       if (step === "WAIT_CHAT_OPEN") {
         // Wait at least 1000ms for WhatsApp search debouncing
         if (stepElapsed >= 1000) {
-          const searchBox = document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
-                            document.querySelector('div[data-testid="chat-list-search"]') ||
-                            document.querySelector('div[role="textbox"][aria-label*="Search"]');
+          const searchBox =
+            document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
+            document.querySelector('#side div[contenteditable="true"]') ||
+            document.querySelector('div[data-testid="chat-list-search"]') ||
+            document.querySelector('div[role="textbox"][aria-label*="Search"]');
 
           // Trigger Enter key on search box
-          if (searchBox && stepElapsed === 1000) {
+          if (searchBox && (stepElapsed === 1000 || stepElapsed === 2000)) {
             const enterEvt = new KeyboardEvent("keydown", {
               key: "Enter",
               code: "Enter",
@@ -727,6 +751,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
           // Also look for first matching search result row
           const chatResult = document.querySelector('div[aria-label="Search results."] div[role="listitem"]') ||
                              document.querySelector('div[aria-label="Search results."] div[role="gridcell"]') ||
+                             document.querySelector('div[aria-label="Search results."] span[title]')?.closest('div[role="listitem"], div[role="gridcell"], div[tabindex]') ||
                              document.querySelector('div[data-testid="chat-list"] div[role="listitem"]') ||
                              document.querySelector('#pane-side div[role="listitem"]') ||
                              document.querySelector('div[data-testid="cell-frame-container"]');
@@ -1010,8 +1035,8 @@ startBtn.addEventListener("click", async () => {
     try {
       log("🔄 Initializing WhatsApp Web (one-time refresh/focus)...", "info");
       await chrome.tabs.reload(activeTab.id);
-      // Wait for WhatsApp Web to reload and mount its interface
-      await new Promise((r) => setTimeout(r, 4500));
+      // Wait for WhatsApp Web to reload and mount its interface completely
+      await new Promise((r) => setTimeout(r, 8000));
     } catch (e) {
       console.warn("Tab reload error:", e);
     }
