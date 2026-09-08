@@ -510,20 +510,27 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
   return new Promise((resolve) => {
     let elapsed = 0;
     const pollInterval = 400;
-    const maxTimeout = 35000;
+    const maxTimeout = 45000;
     let attachClickCount = 0;
-    let fileInjected = false;
+    let chatWaitElapsed = 0;
 
-    // Helper: Synthetic MouseEvent trigger for React / Web Components
+    // Helper: Synthetic Mouse & Pointer Event trigger for React / Web Components
     function clickElement(el) {
       if (!el) return;
-      const opts = { bubbles: true, cancelable: true, view: window };
-      try { el.dispatchEvent(new MouseEvent("pointerdown", opts)); } catch (e) {}
-      try { el.dispatchEvent(new MouseEvent("mousedown", opts)); } catch (e) {}
-      try { el.dispatchEvent(new MouseEvent("mouseup", opts)); } catch (e) {}
-      try { el.dispatchEvent(new MouseEvent("click", opts)); } catch (e) {}
-      if (typeof el.click === "function") {
-        try { el.click(); } catch (e) {}
+      try {
+        const mouseOpts = { bubbles: true, cancelable: true, view: window, button: 0, buttons: 1 };
+        const pointerOpts = { bubbles: true, cancelable: true, view: window, button: 0, buttons: 1, pointerId: 1, isPrimary: true };
+
+        try { el.dispatchEvent(new PointerEvent("pointerdown", pointerOpts)); } catch (e) {}
+        try { el.dispatchEvent(new MouseEvent("mousedown", mouseOpts)); } catch (e) {}
+        try { el.dispatchEvent(new PointerEvent("pointerup", pointerOpts)); } catch (e) {}
+        try { el.dispatchEvent(new MouseEvent("mouseup", mouseOpts)); } catch (e) {}
+        try { el.dispatchEvent(new MouseEvent("click", mouseOpts)); } catch (e) {}
+        if (typeof el.click === "function") {
+          try { el.click(); } catch (e) {}
+        }
+      } catch (e) {
+        console.error("clickElement error:", e);
       }
     }
 
@@ -551,7 +558,77 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
       }
     }
 
+    // Helper: Paste file into WhatsApp Web text input box (triggers React onPaste)
+    function pasteFileToWhatsAppInput(fileObj) {
+      try {
+        const dt = new DataTransfer();
+        dt.items.add(fileObj);
+        try { Object.defineProperty(dt, "types", { get: () => ["Files"], configurable: true }); } catch (e) {}
+
+        const inputBox = document.querySelector('footer div[contenteditable="true"]') ||
+                         document.querySelector('div[contenteditable="true"]');
+
+        if (inputBox) {
+          inputBox.focus();
+          const pasteEvt = new ClipboardEvent("paste", {
+            bubbles: true,
+            cancelable: true,
+            composed: true
+          });
+
+          Object.defineProperty(pasteEvt, "clipboardData", {
+            get: () => dt,
+            value: dt,
+            configurable: true
+          });
+
+          inputBox.dispatchEvent(pasteEvt);
+        }
+      } catch (err) {
+        console.error("Paste event dispatch error:", err);
+      }
+    }
+
+    // Helper: Drag-and-Drop file dispatch directly onto WhatsApp Web chat panel
+    function dropFileOnWhatsApp(fileObj) {
+      try {
+        const dropTargets = [
+          document.querySelector('#main'),
+          document.querySelector('div[data-testid="conversation-panel-wrapper"]'),
+          document.querySelector('div[data-testid="conversation-panel-body"]'),
+          document.querySelector('footer'),
+          document.querySelector('div#app'),
+          document.body
+        ].filter(Boolean);
+
+        for (const target of dropTargets) {
+          const dt = new DataTransfer();
+          dt.items.add(fileObj);
+          try { Object.defineProperty(dt, "types", { get: () => ["Files"], configurable: true }); } catch (e) {}
+
+          ["dragenter", "dragover", "drop"].forEach((type) => {
+            const evt = new DragEvent(type, { bubbles: true, cancelable: true, composed: true });
+            Object.defineProperty(evt, "dataTransfer", { get: () => dt, value: dt, configurable: true });
+            target.dispatchEvent(evt);
+          });
+        }
+      } catch (e) {
+        console.error("Drag-and-Drop event dispatch error:", e);
+      }
+    }
+
     const timer = setInterval(async () => {
+      // Wait for WhatsApp Web chat panel UI to finish loading
+      const isChatReady = !!(document.querySelector('#main') || document.querySelector('footer') || document.querySelector('div[contenteditable="true"]'));
+      if (!isChatReady) {
+        chatWaitElapsed += pollInterval;
+        if (chatWaitElapsed >= 20000) {
+          clearInterval(timer);
+          return resolve({ success: false, error: "WhatsApp Web chat panel did not load. Please check network connection." });
+        }
+        return; // Wait for chat UI to mount
+      }
+
       elapsed += pollInterval;
 
       // 1. Check for Invalid Phone Number / Error Dialog
@@ -579,14 +656,11 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         if (fileObj) {
           // A. FIRST CHECK: Is the Media / Document Preview screen ALREADY OPEN?
           const modalSendBtn =
-            document.querySelector('div[data-animate-modal-popup="true"] span[data-icon="send"]')?.closest("button") ||
-            document.querySelector('div[data-animate-modal-popup="true"] span[data-icon="send"]')?.closest('div[role="button"]') ||
-            document.querySelector('div[role="dialog"] span[data-icon="send"]')?.closest("button") ||
-            document.querySelector('div[role="dialog"] span[data-icon="send"]')?.closest('div[role="button"]') ||
-            document.querySelector('div[data-testid="media-editor-container"] span[data-icon="send"]')?.closest("button") ||
-            document.querySelector('span[data-icon="send"]')?.closest("button") ||
-            document.querySelector('span[data-icon="send"]')?.closest('div[role="button"]') ||
-            document.querySelector('span[data-icon="send-light"]')?.closest("button") ||
+            document.querySelector('div[data-animate-modal-popup="true"] span[data-icon="send"]')?.closest('button, [role="button"]') ||
+            document.querySelector('div[role="dialog"] span[data-icon="send"]')?.closest('button, [role="button"]') ||
+            document.querySelector('div[data-testid="media-editor-container"] span[data-icon="send"]')?.closest('button, [role="button"]') ||
+            document.querySelector('span[data-icon="send"]')?.closest('button, [role="button"]') ||
+            document.querySelector('span[data-icon="send-light"]')?.closest('button, [role="button"]') ||
             document.querySelector('div[aria-label="Send"][role="button"]') ||
             document.querySelector('button[aria-label="Send"]') ||
             document.querySelector('div[data-testid="send"]');
@@ -611,7 +685,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
             }
 
             setTimeout(() => {
-              const btn = modalSendBtn.tagName === "BUTTON" ? modalSendBtn : modalSendBtn.closest("button") || modalSendBtn.closest('div[role="button"]') || modalSendBtn;
+              const btn = modalSendBtn.tagName === "BUTTON" ? modalSendBtn : modalSendBtn.closest('button, [role="button"]') || modalSendBtn;
               clickElement(btn);
               setTimeout(() => resolve({ success: true, details: `Attached Media Sent: ${mediaPayload.name}` }), 2000);
             }, 600);
@@ -630,9 +704,6 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
               const acc = (i.getAttribute("accept") || "").toLowerCase();
               return acc === "*" || acc === "*/*" || acc === "" || acc.includes("pdf") || acc.includes("document");
             });
-            if (targetInputs.length === 0 && fileInputs.length > 0) {
-              targetInputs = fileInputs;
-            }
           } else {
             targetInputs = fileInputs.filter((i) => {
               const acc = (i.getAttribute("accept") || "").toLowerCase();
@@ -690,11 +761,16 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
                   Array.from(openMenu.querySelectorAll("li, button, [role=button]")).find(el => /photo|image/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()));
 
               if (menuBtn) clickElement(menuBtn);
-            } else if (attachClickCount < 5) {
+            } else if (attachClickCount < 8) {
               const attachBtn = document.querySelector('footer [aria-label="Attach"]') ||
                                  document.querySelector('footer [title="Attach"]') ||
-                                 document.querySelector('footer span[data-icon="clip"]')?.closest("button") ||
-                                 document.querySelector('footer span[data-icon="plus"]')?.closest("button");
+                                 document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
+                                 document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
+                                 document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
+                                 document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]') ||
+                                 document.querySelector('footer button') ||
+                                 Array.from(document.querySelectorAll('footer [role="button"], footer button')).find(el => /attach/i.test(el.getAttribute("aria-label") || el.getAttribute("title") || ""));
+
               if (attachBtn) {
                 attachClickCount++;
                 clickElement(attachBtn);
