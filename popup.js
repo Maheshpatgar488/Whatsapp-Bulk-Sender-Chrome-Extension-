@@ -593,7 +593,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
     // States: RESET_SEARCH -> TYPE_SEARCH -> WAIT_CHAT_OPEN -> ATTACH_OR_SEND
     let step = "RESET_SEARCH";
     let stepElapsed = 0;
-    let lastAttachClick = 0;
+    let attachButtonClicked = false;
     let lastInjectionTime = 0;
     let lastDropTime = 0;
     let typingAttempts = 0;
@@ -661,7 +661,6 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
         const dt = new DataTransfer();
         dt.items.add(fileObj);
 
-        // 1. Invoke native prototype setter to bypass React 17/18 synthetic property interceptors
         try {
           const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files");
           if (descriptor && descriptor.set) {
@@ -673,7 +672,6 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
           targetInput.files = dt.files;
         }
 
-        // 2. Ensure property get returns dt.files
         try {
           Object.defineProperty(targetInput, "files", {
             get: () => dt.files,
@@ -681,12 +679,10 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
           });
         } catch (e) {}
 
-        // 3. Clear React internal value tracker if present
         if (targetInput._valueTracker) {
-          try { targetInput._valueTracker.setValue(""); } catch (e) {}
+          try { targetInput._valueTracker.setValue(Math.random().toString()); } catch (e) {}
         }
 
-        // 4. Dispatch bubbling HTML5 input and change events
         const evtOpts = { bubbles: true, cancelable: true, composed: true };
         targetInput.dispatchEvent(new Event("input", evtOpts));
         targetInput.dispatchEvent(new Event("change", evtOpts));
@@ -708,6 +704,10 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
         const dragover = new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt });
         const drop = new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt });
 
+        try { Object.defineProperty(dragenter, "dataTransfer", { value: dt }); } catch (e) {}
+        try { Object.defineProperty(dragover, "dataTransfer", { value: dt }); } catch (e) {}
+        try { Object.defineProperty(drop, "dataTransfer", { value: dt }); } catch (e) {}
+
         targetEl.dispatchEvent(dragenter);
         targetEl.dispatchEvent(dragover);
         targetEl.dispatchEvent(drop);
@@ -716,27 +716,38 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
       }
     }
 
-    // Helper: Find WhatsApp search box in left sidebar
+    // Helper: Paste event simulation (WhatsApp Web native file paste handler)
+    function simulatePaste(targetEl, fileObj) {
+      try {
+        if (!targetEl || !fileObj) return;
+        const dt = new DataTransfer();
+        dt.items.add(fileObj);
+
+        const pasteEvt = new Event("paste", { bubbles: true, cancelable: true });
+        try { Object.defineProperty(pasteEvt, "clipboardData", { value: dt, writable: false }); } catch (e) {}
+
+        targetEl.dispatchEvent(pasteEvt);
+      } catch (e) {
+        console.warn("simulatePaste error:", e);
+      }
+    }
+
+    // Helper: Find WhatsApp search box specifically inside left sidebar (#side)
     function getSearchBox() {
+      const side = document.querySelector('#side');
+      if (side) {
+        const sideInput =
+          side.querySelector('div[contenteditable="true"]') ||
+          side.querySelector('div[role="textbox"]') ||
+          side.querySelector('input[type="text"]') ||
+          side.querySelector('input');
+        if (sideInput) return sideInput;
+      }
       return (
-        // Standard WhatsApp Web contenteditable search box
-        document.querySelector('#side div[contenteditable="true"]') ||
-        document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
         document.querySelector('div[data-testid="chat-list-search"]') ||
-        document.querySelector('div[role="textbox"][aria-label*="Search" i]') ||
-        document.querySelector('div[role="textbox"][title*="Search" i]') ||
-        document.querySelector('div[aria-label*="Search" i][contenteditable="true"]') ||
-        document.querySelector('div[aria-label*="Search or start new chat" i]') ||
-        // Standard input element if rendered as HTML5 input
+        document.querySelector('#side div[contenteditable="true"]') ||
         document.querySelector('#side input[type="text"]') ||
-        document.querySelector('input[type="text"][placeholder*="Search" i]') ||
-        document.querySelector('input[placeholder*="Search" i]') ||
-        // Any contenteditable outside of main chat pane
-        Array.from(document.querySelectorAll('#side div[contenteditable="true"], div[contenteditable="true"]')).find(el => {
-          return !el.closest('#main') && !el.closest('footer');
-        }) ||
-        // Sibling of pane-side
-        document.querySelector('#pane-side')?.parentElement?.querySelector('div[contenteditable="true"], input')
+        document.querySelector('input[placeholder*="Search or start new chat" i]')
       );
     }
 
@@ -745,11 +756,10 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
       const box = getSearchBox();
       const currentText = box ? (box.innerText || box.textContent || box.value || "").trim() : "";
 
-      // Only click clear/cancel button if there was text
       if (currentText.length > 0) {
         const cancelBtn =
-          document.querySelector('button[aria-label="Cancel search" i]') ||
-          document.querySelector('button[aria-label="Clear search" i]') ||
+          document.querySelector('#side button[aria-label*="Cancel" i]') ||
+          document.querySelector('#side button[aria-label*="Clear" i]') ||
           document.querySelector('#side span[data-icon="x-alt"]')?.closest('button, [role="button"]') ||
           document.querySelector('#side span[data-icon="x"]')?.closest('button, [role="button"]') ||
           document.querySelector('#side span[data-icon="search-alt-close"]')?.closest('button, [role="button"]');
@@ -759,7 +769,6 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
         }
       }
 
-      // Clear contenteditable or input text directly
       if (box) {
         try {
           box.focus();
@@ -805,7 +814,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
       // STEP 0: RESET AND ENSURE CLEAN SEARCH BAR
       if (step === "RESET_SEARCH") {
         clearSearchInput();
-        if (stepElapsed >= 400) {
+        if (stepElapsed >= 300) {
           step = "SEARCH_CONTACT";
           stepElapsed = 0;
         }
@@ -817,10 +826,9 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
         let searchBox = getSearchBox();
 
         if (!searchBox) {
-          // If search icon button needs to be clicked first (collapsed search)
-          const searchTrigger = document.querySelector('button[aria-label*="Search" i]') ||
-                                document.querySelector('#side span[data-icon="search"]')?.closest('button, [role="button"]') ||
-                                document.querySelector('span[data-icon="search"]')?.closest('button, [role="button"]');
+          // If search icon button in #side needs to be clicked (collapsed search in #side ONLY)
+          const searchTrigger = document.querySelector('#side button[aria-label*="Search" i]') ||
+                                document.querySelector('#side span[data-icon="search"]')?.closest('button, [role="button"]');
           if (searchTrigger) {
             clickElement(searchTrigger);
           }
@@ -867,7 +875,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
           return;
         } else {
           typingAttempts++;
-          if (typingAttempts > 4) {
+          if (typingAttempts > 3) {
             searchBox.innerText = contactQuery;
             if (searchBox.tagName === "INPUT") searchBox.value = contactQuery;
             searchBox.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: contactQuery }));
@@ -973,7 +981,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
         return;
       }
 
-      // STEP 3: ATTACH PHOTO/VIDEO OR SEND TEXT MESSAGE
+      // STEP 3: ATTACH PHOTO/VIDEO/FILE OR SEND TEXT MESSAGE
       if (step === "ATTACH_OR_SEND") {
         const hasMedia = !!(mediaPayload && mediaPayload.base64);
 
@@ -981,7 +989,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
           const fileObj = createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
           if (!fileObj) {
             clearInterval(timer);
-            return resolve({ success: false, error: "Failed to convert photo/video data to DOM File" });
+            return resolve({ success: false, error: "Failed to convert file data to DOM File" });
           }
 
           // Check if Media Viewer Modal is open
@@ -1040,93 +1048,66 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
 
               setTimeout(() => {
                 clearSearchInput();
-                resolve({ success: true, details: `Photo/Video & Greeting Sent to ${contactQuery}` });
+                resolve({ success: true, details: `File & Greeting Sent to ${contactQuery}` });
               }, 2500);
             }, 600);
             return;
           }
 
-          // IF NOT IN PREVIEW YET: DETECT ATTACH MENU OR OPEN IT
+          // NOT IN PREVIEW YET:
           const now = Date.now();
+          const chatArea = document.querySelector('#main') || document.body;
+          const chatInput = document.querySelector('#main footer div[contenteditable="true"]');
 
-          // Check if attach menu options exist in the DOM
-          const photosVideosOption = Array.from(document.querySelectorAll('span, div, li, button')).find(el => {
-            const text = (el.innerText || el.textContent || "").trim();
-            return /^photos\s*(&|and)\s*videos$/i.test(text);
-          });
+          // Attempt 1: Direct Paste & Drop to chat (instant native WhatsApp Web handlers)
+          if (stepElapsed <= 3000 && (now - lastDropTime > 1200)) {
+            lastDropTime = now;
+            if (chatInput) simulatePaste(chatInput, fileObj);
+            simulateDrop(chatArea, fileObj);
+          }
 
-          const documentOption = Array.from(document.querySelectorAll('span, div, li, button')).find(el => {
-            const text = (el.innerText || el.textContent || "").trim();
-            return /^document$/i.test(text);
-          });
+          // Attempt 2: If preview didn't open after 3s, click the Attach (+) button ONCE (never toggle)
+          if (stepElapsed > 3000 && !attachButtonClicked) {
+            attachButtonClicked = true;
+            const attachBtn =
+              document.querySelector('footer [aria-label="Attach"]') ||
+              document.querySelector('footer [title="Attach"]') ||
+              document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
+              document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
+              document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
+              document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]');
 
-          // Check for file inputs in DOM
-          const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-          const mediaInput = fileInputs.find(i => {
-            const acc = (i.getAttribute("accept") || "").toLowerCase();
-            return acc.includes("image") || acc.includes("video");
-          });
+            if (attachBtn) {
+              clickElement(attachBtn);
+            }
+          }
 
-          const docInput = fileInputs.find(i => {
-            const acc = (i.getAttribute("accept") || "").toLowerCase();
-            return acc === "*" || acc === "*/*" || acc.includes("pdf") || (!acc.includes("image") && !acc.includes("video"));
-          });
-
-          const isMenuOpen = !!(photosVideosOption || documentOption || (fileInputs.length > 0 && lastAttachClick > 0));
-
-          if (isMenuOpen) {
-            // ATTACH MENU IS OPEN: DO NOT CLICK ATTACH BUTTON AGAIN (would close menu)!
+          // Attempt 3: If attach button was clicked, find file inputs and inject
+          if (attachButtonClicked) {
             const isStandardWebMedia = /\.(jpe?g|png|gif|webp|mp4|webm|3gp)$/i.test(mediaPayload.name) ||
               (mediaPayload.type && (mediaPayload.type.startsWith("image/") || mediaPayload.type === "video/mp4" || mediaPayload.type === "video/webm"));
 
-            let targetInput = null;
-            if (isStandardWebMedia) {
-              targetInput = mediaInput ||
-                            photosVideosOption?.closest('li, div[role="button"], button')?.querySelector('input[type="file"]') ||
-                            docInput ||
-                            fileInputs[0];
-            } else {
-              // Non-standard video (MKV, AVI, WMV, FLV, etc.) or Documents (PDF, DOCX, ZIP, etc.) -> Target Document input!
-              targetInput = docInput ||
-                            documentOption?.closest('li, div[role="button"], button')?.querySelector('input[type="file"]') ||
-                            fileInputs.find(i => i !== mediaInput) ||
-                            fileInputs[0];
-            }
+            const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+            const mediaInput = fileInputs.find(i => {
+              const acc = (i.getAttribute("accept") || "").toLowerCase();
+              return acc.includes("image") || acc.includes("video");
+            });
+            const docInput = fileInputs.find(i => {
+              const acc = (i.getAttribute("accept") || "").toLowerCase();
+              return acc === "*" || acc === "*/*" || acc.includes("pdf") || (!acc.includes("image") && !acc.includes("video"));
+            });
 
-            if (targetInput && (now - lastInjectionTime > 2000)) {
+            let targetInput = isStandardWebMedia ? (mediaInput || fileInputs[0]) : (docInput || fileInputs.find(i => i !== mediaInput) || fileInputs[0]);
+
+            if (targetInput && (now - lastInjectionTime > 1500)) {
               lastInjectionTime = now;
               injectFileIntoInput(targetInput, fileObj);
             }
 
-            // Also try drop event fallback if preview didn't open after 3.5s
-            if (stepElapsed > 3500 && (now - lastDropTime > 2500)) {
+            // Also keep trying drop/paste as secondary trigger
+            if (now - lastDropTime > 2000) {
               lastDropTime = now;
-              simulateDrop(document.querySelector('#main') || document.body, fileObj);
-            }
-          } else {
-            // ATTACH MENU NOT OPEN: Click Attach (+) button ONCE and wait at least 4s before re-clicking
-            if (now - lastAttachClick > 4000) {
-              lastAttachClick = now;
-              const attachBtn =
-                document.querySelector('footer [aria-label="Attach"]') ||
-                document.querySelector('footer [title="Attach"]') ||
-                document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
-                document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
-                document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
-                document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]') ||
-                Array.from(document.querySelectorAll('footer [role="button"], footer button')).find(el =>
-                  /attach/i.test(el.getAttribute("aria-label") || el.getAttribute("title") || "")
-                );
-
-              if (attachBtn) {
-                clickElement(attachBtn);
-              }
-            }
-
-            // Also try simulated drop directly on chat area
-            if (stepElapsed > 4000 && (now - lastDropTime > 3000)) {
-              lastDropTime = now;
-              simulateDrop(document.querySelector('#main') || document.body, fileObj);
+              simulateDrop(chatArea, fileObj);
             }
           }
         } else {
@@ -1413,8 +1394,8 @@ startBtn.addEventListener("click", async () => {
           target: { tabId: activeTab.id },
           func: () => {
             const clearButtons = Array.from(document.querySelectorAll(
-              '#side button[aria-label*="Cancel"], #side button[aria-label*="Clear"], #side button[aria-label*="back" i], ' +
-              '#side span[data-icon="x-alt"], #side span[data-icon="x"], #side span[data-icon="back"], #side span[data-icon="search-alt-close"], ' +
+              '#side button[aria-label*="Cancel"], #side button[aria-label*="Clear"], ' +
+              '#side span[data-icon="x-alt"], #side span[data-icon="x"], #side span[data-icon="search-alt-close"], ' +
               'button[aria-label="Cancel search"], button[aria-label="Clear search"]'
             ));
             for (const b of clearButtons) {
