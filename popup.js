@@ -510,11 +510,8 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
   return new Promise((resolve) => {
     let elapsed = 0;
     const pollInterval = 400;
-    const maxTimeout = 40000;
-    let hasInjectedMedia = false;
-    let isInjectingMedia = false;
+    const maxTimeout = 30000;
     let attachClickCount = 0;
-    let mediaAttemptTime = 0;
 
     // Helper: Synthetic MouseEvent trigger for React / Web Components
     function clickElement(el) {
@@ -550,6 +547,37 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
       } catch (err) {
         console.error("base64 to File conversion error:", err);
         return null;
+      }
+    }
+
+    // Helper: Paste file into WhatsApp Web text input box (triggers React onPaste)
+    function pasteFileToWhatsAppInput(fileObj) {
+      const dt = new DataTransfer();
+      dt.items.add(fileObj);
+
+      const inputBox = document.querySelector('footer div[contenteditable="true"]') ||
+                       document.querySelector('div[contenteditable="true"]');
+
+      if (inputBox) {
+        try {
+          inputBox.focus();
+
+          const pasteEvt = new ClipboardEvent("paste", {
+            bubbles: true,
+            cancelable: true,
+            composed: true
+          });
+
+          Object.defineProperty(pasteEvt, "clipboardData", {
+            get: () => dt,
+            value: dt,
+            configurable: true
+          });
+
+          inputBox.dispatchEvent(pasteEvt);
+        } catch (err) {
+          console.error("Paste event dispatch error:", err);
+        }
       }
     }
 
@@ -602,142 +630,108 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         }
       }
 
-      // 2. Handle Media / PDF Attachment Injection if mediaPayload is present
+      // 2. MEDIA ATTACHMENT FLOW (Strict PDF / Document Attachment mode)
       if (mediaPayload && mediaPayload.base64) {
-        if (!hasInjectedMedia && !isInjectingMedia) {
-          isInjectingMedia = true;
-          if (mediaAttemptTime === 0) mediaAttemptTime = Date.now();
+        const fileObj = createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
+        if (fileObj) {
+          const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
 
-          const fileObj = createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
-          if (fileObj) {
-            const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
+          // Periodically dispatch file injection triggers every ~1.2s
+          if (elapsed % 1200 < pollInterval) {
+            // Trigger 1: Paste Event
+            pasteFileToWhatsAppInput(fileObj);
 
-            // 2a. Click attach button (+) / paperclip icon if available to ensure attach menu / handlers are active
-            if (attachClickCount < 2) {
+            // Trigger 2: Drag and Drop
+            dropFileOnWhatsApp(fileObj);
+
+            // Trigger 3: Attach Button & File Input Injection
+            if (attachClickCount < 3) {
               const attachBtn = document.querySelector('footer div[title="Attach"]') ||
                                  document.querySelector('footer div[aria-label="Attach"]') ||
                                  document.querySelector('footer button[aria-label="Attach"]') ||
                                  document.querySelector('footer button[title="Attach"]') ||
-                                 document.querySelector('footer span[data-icon="plus"]')?.closest('div[role="button"]') ||
-                                 document.querySelector('footer span[data-icon="plus"]')?.closest('button') ||
-                                 document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('div[role="button"]') ||
-                                 document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button') ||
-                                 document.querySelector('footer span[data-icon="clip"]')?.closest('div[role="button"]') ||
-                                 document.querySelector('footer span[data-icon="clip"]')?.closest('button') ||
-                                 document.querySelector('div[title="Attach"]') ||
-                                 document.querySelector('div[aria-label="Attach"]') ||
-                                 document.querySelector('button[aria-label="Attach"]') ||
-                                 document.querySelector('button[title="Attach"]') ||
-                                 document.querySelector('span[data-icon="plus"]')?.closest('div[role="button"]') ||
-                                 document.querySelector('span[data-icon="plus"]')?.closest('button') ||
-                                 document.querySelector('span[data-icon="attach-menu-plus"]')?.closest('div[role="button"]') ||
-                                 document.querySelector('span[data-icon="attach-menu-plus"]')?.closest('button') ||
-                                 document.querySelector('span[data-icon="clip"]')?.closest('div[role="button"]') ||
-                                 document.querySelector('span[data-icon="clip"]')?.closest('button');
+                                 document.querySelector('footer span[data-icon="clip"]')?.closest("button") ||
+                                 document.querySelector('footer span[data-icon="plus"]')?.closest("button") ||
+                                 document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest("button") ||
+                                 document.querySelector('footer span[data-icon="clip"]') ||
+                                 document.querySelector('footer span[data-icon="plus"]');
 
               if (attachBtn) {
                 attachClickCount++;
                 clickElement(attachBtn);
-                await new Promise((r) => setTimeout(r, 500));
               }
             }
 
-            // 2b. Attempt Drag-and-Drop file dispatch directly onto chat panel
-            dropFileOnWhatsApp(fileObj);
-
-            // 2c. Query for file inputs and inject file into target input
-            let fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+            const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
             if (fileInputs.length > 0) {
-              let targetInput = null;
-              if (isDocument) {
-                targetInput = fileInputs.find((i) => i.accept === "*" || i.accept === "*/*" || i.accept.includes("document") || i.accept.includes("pdf")) ||
-                              fileInputs.find((i) => !i.accept.includes("image/")) ||
-                              fileInputs[fileInputs.length - 1];
-              } else {
-                targetInput = fileInputs.find((i) => i.accept.includes("image") || i.accept.includes("video")) ||
-                              fileInputs[0];
-              }
+              let targetInput = isDocument ?
+                (fileInputs.find((i) => i.accept === "*" || i.accept === "*/*" || i.accept.includes("document") || i.accept.includes("pdf")) || fileInputs[fileInputs.length - 1]) :
+                (fileInputs.find((i) => i.accept.includes("image") || i.accept.includes("video")) || fileInputs[0]);
 
               if (targetInput) {
                 try {
-                  targetInput.focus();
                   const dt = new DataTransfer();
                   dt.items.add(fileObj);
-                  
-                  // React 18 compatible property setter
-                  try {
-                    const propDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files");
-                    if (propDesc && propDesc.set) {
-                      propDesc.set.call(targetInput, dt.files);
-                    } else {
-                      targetInput.files = dt.files;
-                    }
-                  } catch (e) {
-                    try {
-                      Object.defineProperty(targetInput, "files", { value: dt.files, writable: true, configurable: true });
-                    } catch (err) {
-                      targetInput.files = dt.files;
-                    }
+                  const propDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files");
+                  if (propDesc && propDesc.set) {
+                    propDesc.set.call(targetInput, dt.files);
+                  } else {
+                    targetInput.files = dt.files;
                   }
-
                   const evtOpts = { bubbles: true, cancelable: true, composed: true };
                   targetInput.dispatchEvent(new Event("change", evtOpts));
                   targetInput.dispatchEvent(new Event("input", evtOpts));
-                } catch (err) {
-                  console.error("Target input dispatch error:", err);
+                } catch (e) {}
+              }
+            }
+          }
+
+          // Check for Media / Document Preview Modal
+          const previewModal = document.querySelector('div[data-animate-modal-popup="true"]') ||
+                               document.querySelector('div[data-testid="media-editor-container"]') ||
+                               document.querySelector('div[data-testid="document-editor"]') ||
+                               document.querySelector('div[role="dialog"]') ||
+                               document.querySelector('div[data-testid="drawer-middle"]');
+
+          if (previewModal) {
+            const modalSendBtn = previewModal.querySelector('span[data-icon="send"]')?.closest("button") ||
+                                 previewModal.querySelector('span[data-icon="send"]')?.closest('div[role="button"]') ||
+                                 previewModal.querySelector('span[data-icon="send"]') ||
+                                 previewModal.querySelector('span[data-icon="send-light"]')?.closest("button") ||
+                                 previewModal.querySelector('div[aria-label="Send"][role="button"]') ||
+                                 previewModal.querySelector('button[aria-label="Send"]') ||
+                                 previewModal.querySelector('div[data-testid="send"]');
+
+            if (modalSendBtn) {
+              clearInterval(timer);
+
+              // Add caption inside preview modal if present
+              if (captionText && captionText.trim().length > 0) {
+                const captionBox = previewModal.querySelector('div[contenteditable="true"]');
+                if (captionBox) {
+                  captionBox.focus();
+                  document.execCommand("insertText", false, captionText);
+                  captionBox.dispatchEvent(new Event("input", { bubbles: true }));
                 }
               }
+
+              setTimeout(() => {
+                const btn = modalSendBtn.tagName === "BUTTON" ? modalSendBtn : modalSendBtn.closest("button") || modalSendBtn.closest('div[role="button"]') || modalSendBtn;
+                clickElement(btn);
+                setTimeout(() => resolve({ success: true, details: `Attached Media Sent: ${mediaPayload.name}` }), 2000);
+              }, 600);
+              return;
             }
-
-            hasInjectedMedia = true;
-          }
-          isInjectingMedia = false;
-        }
-
-        // 2e. Check for Media / Document Preview Modal
-        const previewModal = document.querySelector('div[data-animate-modal-popup="true"]') ||
-                             document.querySelector('div[data-testid="media-editor-container"]') ||
-                             document.querySelector('div[data-testid="document-editor"]') ||
-                             document.querySelector('div[role="dialog"]') ||
-                             document.querySelector('div[data-testid="drawer-middle"]');
-
-        if (previewModal) {
-          const modalSendBtn = previewModal.querySelector('span[data-icon="send"]')?.closest("button") ||
-                               previewModal.querySelector('span[data-icon="send"]')?.closest('div[role="button"]') ||
-                               previewModal.querySelector('span[data-icon="send"]') ||
-                               previewModal.querySelector('span[data-icon="send-light"]')?.closest("button") ||
-                               previewModal.querySelector('div[aria-label="Send"][role="button"]') ||
-                               previewModal.querySelector('button[aria-label="Send"]') ||
-                               previewModal.querySelector('div[data-testid="send"]');
-
-          if (modalSendBtn) {
-            clearInterval(timer);
-
-            // Add caption inside preview modal if present
-            if (captionText && captionText.trim().length > 0) {
-              const captionBox = previewModal.querySelector('div[contenteditable="true"]');
-              if (captionBox) {
-                captionBox.focus();
-                document.execCommand("insertText", false, captionText);
-                captionBox.dispatchEvent(new Event("input", { bubbles: true }));
-              }
-            }
-
-            setTimeout(() => {
-              const btn = modalSendBtn.tagName === "BUTTON" ? modalSendBtn : modalSendBtn.closest("button") || modalSendBtn.closest('div[role="button"]') || modalSendBtn;
-              clickElement(btn);
-              setTimeout(() => resolve({ success: true, details: `Attached Media Sent: ${mediaPayload.name}` }), 2000);
-            }, 600);
-            return;
           }
         }
-      }
 
-      // 3. FALLBACK FOR TEXT SENDING (If no media attached OR if media preview modal did not dispatch after 18 seconds)
-      const maxMediaWait = 18000;
-      const shouldSendTextOnly = (!mediaPayload || !mediaPayload.base64) || (mediaAttemptTime > 0 && Date.now() - mediaAttemptTime > maxMediaWait);
-
-      if (shouldSendTextOnly) {
+        // Strict Timeout: Never fallback to text-only if user explicitly attached media!
+        if (elapsed >= 25000) {
+          clearInterval(timer);
+          return resolve({ success: false, error: `Could not attach PDF document (${mediaPayload.name}) to WhatsApp Web. Please ensure WhatsApp Web chat panel is open.` });
+        }
+      } else {
+        // 3. TEXT ONLY FLOW (No media attached)
         const sendButton =
           document.querySelector('footer button span[data-icon="send"]')?.closest("button") ||
           document.querySelector('footer span[data-icon="send"]')?.closest("button") ||
@@ -754,13 +748,11 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
           setTimeout(() => {
             const btn = sendButton.tagName === "BUTTON" ? sendButton : sendButton.closest("button") || sendButton;
             btn.click();
-            const detailMsg = mediaPayload ? "Delivered (Text Only - Attachment Fallback)" : "Message Delivered via Send Button";
-            setTimeout(() => resolve({ success: true, details: detailMsg }), 1500);
+            setTimeout(() => resolve({ success: true, details: "Message Delivered via Send Button" }), 1500);
           }, 500);
           return;
         }
 
-        // Fallback: Enter key on footer input
         const inputBox = document.querySelector('footer div[contenteditable="true"]');
         if (inputBox && inputBox.innerText.trim().length > 0 && elapsed > 3500) {
           clearInterval(timer);
@@ -777,12 +769,11 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
           setTimeout(() => resolve({ success: true, details: "Message Delivered via Enter Key" }), 1500);
           return;
         }
-      }
 
-      // 4. Timeout check
-      if (elapsed >= maxTimeout) {
-        clearInterval(timer);
-        resolve({ success: false, error: "Timeout: Send button or media input did not respond on WhatsApp Web" });
+        if (elapsed >= maxTimeout) {
+          clearInterval(timer);
+          resolve({ success: false, error: "Timeout: Send button did not respond on WhatsApp Web" });
+        }
       }
     }, pollInterval);
   });
@@ -800,85 +791,66 @@ startBtn.addEventListener("click", async () => {
   // Quota check before starting
   const quotaCheck = checkCanSend(!!attachedMedia);
   if (!quotaCheck.allowed) {
-    log(`❌ Sending Blocked: ${quotaCheck.reason}`, "error");
-    openQuotaModal(quotaCheck.reason);
+    alert(`Quota Exceeded!\n\n${quotaCheck.reason}`);
     return;
   }
 
-  let tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  let activeTab = tabs[0];
-
-  if (!activeTab || !activeTab.url || !activeTab.url.includes("web.whatsapp.com")) {
-    const allWa = await chrome.tabs.query({ url: "*://web.whatsapp.com/*" });
-    if (allWa && allWa.length > 0) {
-      activeTab = allWa[0];
-    }
-  }
-
-  if (!activeTab || !activeTab.url || !activeTab.url.includes("web.whatsapp.com")) {
-    alert("Please open https://web.whatsapp.com first.");
+  const contacts = getParsedContacts();
+  if (contacts.length === 0) {
+    alert("No valid contacts loaded. Please upload contacts (.csv, .xlsx, .txt, .vcf).");
     return;
   }
+
+  // Check quota for total contacts
+  if (contacts.length > quotaCheck.remainingText) {
+    alert(`Quota Warning: You are trying to send to ${contacts.length} contacts, but your remaining text quota is ${quotaCheck.remainingText}.\n\nPlease upgrade your plan to send more.`);
+    return;
+  }
+  if (attachedMedia && contacts.length > quotaCheck.remainingMedia) {
+    alert(`Quota Warning: You are trying to attach media for ${contacts.length} contacts, but your remaining media quota is ${quotaCheck.remainingMedia}.\n\nPlease upgrade your plan to send more attachments.`);
+    return;
+  }
+
+  const minDelay = parseInt(minDelayInput.value) || 4;
+  const maxDelay = parseInt(maxDelayInput.value) || 8;
+  const isSafeMode = safeModeToggle.checked;
 
   isSending = true;
+  updateUIState();
   runResults = [];
-  startBtn.style.display = "none";
-  stopBtn.style.display = "block";
-  exportBtn.style.display = "none";
-  fileInput.disabled = true;
-  if (mediaFile) mediaFile.disabled = true;
-  progressWrap.style.display = "block";
 
-  const isDryRun = testModeToggle.checked;
-  const minDelaySec = Math.max(1, parseInt(minDelayInput.value, 10) || 4);
-  const maxDelaySec = Math.max(minDelaySec, parseInt(maxDelayInput.value, 10) || 8);
+  const mediaDesc = attachedMedia ? ` + Media [${attachedMedia.name}]` : "";
+  log(`🚀 Starting ${isSafeMode ? "SAFE DRY RUN" : "LIVE"} bulk sending for ${contacts.length} contacts${mediaDesc}...`, "info");
 
   let sent = 0;
   let failed = 0;
 
-  const mediaDesc = attachedMedia ? ` + Media [${attachedMedia.name}]` : "";
-
-  log(isDryRun 
-    ? `🧪 Starting DRY RUN simulation for ${contacts.length} contacts${mediaDesc}...`
-    : `🚀 Starting LIVE bulk sending for ${contacts.length} contacts${mediaDesc}...`, "info");
-
   for (let i = 0; i < contacts.length; i++) {
     if (!isSending) {
-      log(`Process stopped by user at ${i}/${contacts.length}.`, "error");
-      break;
-    }
-
-    // Check quota before each contact
-    const checkEach = checkCanSend(!!attachedMedia);
-    if (!checkEach.allowed) {
-      log(`❌ Campaign paused at contact ${i + 1}/${contacts.length}: ${checkEach.reason}`, "error");
-      openQuotaModal(checkEach.reason);
+      log("⏹ Bulk sending process stopped by user.", "warning");
       break;
     }
 
     const contact = contacts[i];
-    const personalizedMessage = buildMessage(template, contact);
+    const personalizedMessage = personalizeMessage(template, contact);
 
-    if (isDryRun) {
-      // Safe Simulation
-      log(`[TEST MODE ${i + 1}/${contacts.length}] Contact: ${contact._parsedName} (+${contact._parsedPhone})`, "info");
+    if (isSafeMode) {
+      // Safe Mode (Dry Run)
+      log(`[DRY RUN] Simulating send to ${contact._parsedName} (+${contact._parsedPhone}): "${personalizedMessage.substring(0, 40)}..."`, "info");
       if (attachedMedia) log(`📎 [Attachment]: ${attachedMedia.name} (${(attachedMedia.size / 1024 / 1024).toFixed(2)} MB)`, "info");
-      log(`📝 Message/Caption: "${personalizedMessage}"`, "info");
-
-      await new Promise((resolve) => setTimeout(resolve, 800));
 
       sent++;
       sentCountEl.textContent = sent;
       runResults.push({
         ...contact,
-        DeliveryStatus: "Simulated Sent",
+        DeliveryStatus: "Simulated (Safe Mode)",
         Attachment: attachedMedia ? attachedMedia.name : "None",
+        Method: "Dry Run",
         Timestamp: new Date().toISOString(),
         SentMessage: personalizedMessage
       });
-      log(`✓ [Simulated OK] ${contact._parsedName}`, "success");
 
-      // Deduct Quota
+      // Deduct Quota in Dry Run mode too
       if (currentSubscription) {
         currentSubscription.textUsed += 1;
         if (attachedMedia) currentSubscription.mediaUsed += 1;
@@ -888,8 +860,10 @@ startBtn.addEventListener("click", async () => {
       // Live Sending Flow
       log(`(${i + 1}/${contacts.length}) Opening chat for ${contact._parsedName} (+${contact._parsedPhone})...`, "info");
 
-      // Always include personalized message in WhatsApp Web URL so text is NEVER lost
-      const directUrl = `https://web.whatsapp.com/send?phone=${contact._parsedPhone}&text=${encodeURIComponent(personalizedMessage)}`;
+      // For media attached, use clean chat URL so text does not pre-fill main footer
+      const directUrl = attachedMedia
+        ? `https://web.whatsapp.com/send?phone=${contact._parsedPhone}`
+        : `https://web.whatsapp.com/send?phone=${contact._parsedPhone}&text=${encodeURIComponent(personalizedMessage)}`;
       
       try {
         // 1. Navigate active tab to direct URL
