@@ -515,14 +515,20 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
     let isInjectingMedia = false;
     let mediaAttemptTime = 0;
 
-    // Helper: Convert base64 DataURL back to a DOM File object inside page context
-    async function createDOMFile(base64Data, name, type) {
+    // Helper: Convert base64 DataURL back to a DOM File object synchronously (100% CSP safe)
+    function createDOMFile(base64Data, name, type) {
       try {
-        const res = await fetch(base64Data);
-        const blob = await res.blob();
-        return new File([blob], name, { type: type || "application/pdf" });
+        const parts = base64Data.split(",");
+        const mime = parts[0].match(/:(.*?);/)?.[1] || type || "application/pdf";
+        const bstr = atob(parts[1] || parts[0]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        return new File([u8arr], name, { type: mime });
       } catch (err) {
-        console.error("File creation error:", err);
+        console.error("base64 to File conversion error:", err);
         return null;
       }
     }
@@ -575,14 +581,27 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
 
             if (attachBtn) {
               attachBtn.click();
-              await new Promise((r) => setTimeout(r, 450));
+              await new Promise((r) => setTimeout(r, 350));
+
+              // Click Document / Image item in dropdown if present
+              const isDoc = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
+              const docItem = isDoc ?
+                              (document.querySelector('span[data-icon="attach-document"]')?.closest("li") ||
+                               document.querySelector('span[data-icon="attach-document"]')?.closest("button") ||
+                               document.querySelector('span[data-icon="document"]')?.closest("li")) :
+                              (document.querySelector('span[data-icon="attach-image"]')?.closest("li") ||
+                               document.querySelector('span[data-icon="attach-image"]')?.closest("button") ||
+                               document.querySelector('span[data-icon="image"]')?.closest("li"));
+
+              if (docItem) docItem.click();
+              await new Promise((r) => setTimeout(r, 350));
               fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
             }
           }
 
           // 2c. Inject File into input
           if (fileInputs.length > 0) {
-            const fileObj = await createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
+            const fileObj = createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
             if (fileObj) {
               const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
 
@@ -596,6 +615,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
               }
 
               if (targetInput) {
+                targetInput.focus();
                 const dt = new DataTransfer();
                 dt.items.add(fileObj);
                 targetInput.files = dt.files;
@@ -644,8 +664,8 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         }
       }
 
-      // 3. FALLBACK FOR TEXT SENDING (If no media attached OR if media preview modal did not open after 4.5 seconds)
-      const shouldSendTextOnly = (!mediaPayload || !mediaPayload.base64) || (mediaAttemptTime > 0 && Date.now() - mediaAttemptTime > 4500 && !hasInjectedMedia);
+      // 3. FALLBACK FOR TEXT SENDING (If no media attached OR if media preview modal did not open after 7 seconds)
+      const shouldSendTextOnly = (!mediaPayload || !mediaPayload.base64) || (mediaAttemptTime > 0 && Date.now() - mediaAttemptTime > 7000 && !hasInjectedMedia);
 
       if (shouldSendTextOnly) {
         const sendButton =
