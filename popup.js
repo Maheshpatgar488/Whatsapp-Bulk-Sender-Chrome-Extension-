@@ -1413,6 +1413,7 @@ startBtn.addEventListener("click", async () => {
     }
   }
 
+  const totalProcessed = contacts.length;
   isSending = false;
   startBtn.style.display = "block";
   stopBtn.style.display = "none";
@@ -1420,8 +1421,30 @@ startBtn.addEventListener("click", async () => {
   if (mediaFile) mediaFile.disabled = false;
   exportBtn.style.display = "block";
 
-  log(`Completed! Total: ${contacts.length} | Sent: ${sent} | Failed: ${failed}`, "success");
+  log(`Completed! Total: ${totalProcessed} | Sent: ${sent} | Failed: ${failed}`, "success");
+  resetForm();
 });
+
+// Reset form inputs after sending session finishes
+function resetForm() {
+  contacts = [];
+  fileInput.value = "";
+  fileBadge.textContent = "";
+  if (dropzoneText) dropzoneText.innerHTML = "Click or Drag & Drop File Here";
+  templateInput.value = "";
+  clearMedia();
+  if (placeholderChips) {
+    placeholderChips.innerHTML = `
+      <span class="chip-tag" data-tag="{name}">{name}</span>
+      <span class="chip-tag" data-tag="{phone}">{phone}</span>
+    `;
+    placeholderChips.querySelectorAll(".chip-tag").forEach((chip) => {
+      chip.addEventListener("click", () => insertTagIntoTemplate(chip.getAttribute("data-tag")));
+    });
+  }
+  updateLivePreview();
+  startBtn.disabled = true;
+}
 
 // Stop sending
 stopBtn.addEventListener("click", () => {
