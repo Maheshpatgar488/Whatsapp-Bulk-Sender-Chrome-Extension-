@@ -510,8 +510,9 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
   return new Promise((resolve) => {
     let elapsed = 0;
     const pollInterval = 400;
-    const maxTimeout = 30000;
+    const maxTimeout = 35000;
     let attachClickCount = 0;
+    let fileInjected = false;
 
     // Helper: Synthetic MouseEvent trigger for React / Web Components
     function clickElement(el) {
@@ -550,64 +551,6 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
       }
     }
 
-    // Helper: Paste file into WhatsApp Web text input box (triggers React onPaste)
-    function pasteFileToWhatsAppInput(fileObj) {
-      const dt = new DataTransfer();
-      dt.items.add(fileObj);
-
-      const inputBox = document.querySelector('footer div[contenteditable="true"]') ||
-                       document.querySelector('div[contenteditable="true"]');
-
-      if (inputBox) {
-        try {
-          inputBox.focus();
-
-          const pasteEvt = new ClipboardEvent("paste", {
-            bubbles: true,
-            cancelable: true,
-            composed: true
-          });
-
-          Object.defineProperty(pasteEvt, "clipboardData", {
-            get: () => dt,
-            value: dt,
-            configurable: true
-          });
-
-          inputBox.dispatchEvent(pasteEvt);
-        } catch (err) {
-          console.error("Paste event dispatch error:", err);
-        }
-      }
-    }
-
-    // Helper: Drag-and-Drop file dispatch directly onto WhatsApp Web chat panel
-    function dropFileOnWhatsApp(fileObj) {
-      const dropTargets = [
-        document.querySelector('#main'),
-        document.querySelector('div[data-testid="conversation-panel-wrapper"]'),
-        document.querySelector('div[data-testid="conversation-panel-body"]'),
-        document.querySelector('footer'),
-        document.querySelector('div#app'),
-        document.body
-      ].filter(Boolean);
-
-      for (const target of dropTargets) {
-        try {
-          const dt = new DataTransfer();
-          dt.items.add(fileObj);
-
-          ["dragenter", "dragover", "drop"].forEach((type) => {
-            const evt = new DragEvent(type, { bubbles: true, cancelable: true, composed: true });
-            Object.defineProperty(evt, "dataTransfer", { get: () => dt, value: dt, configurable: true });
-            target.dispatchEvent(evt);
-          });
-        } catch (e) {
-          console.error("Drag-and-Drop event dispatch error:", e);
-        }
-      }
-    }
-
     const timer = setInterval(async () => {
       elapsed += pollInterval;
 
@@ -636,83 +579,57 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         if (fileObj) {
           const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
 
-          // Periodically dispatch file injection triggers every ~1.0s
-          if (elapsed % 1000 < pollInterval) {
-            // Trigger 1: Paste Event
-            pasteFileToWhatsAppInput(fileObj);
+          // WhatsApp accepts documents through its hidden file input. Use one
+          // deterministic path so paste/drop events cannot create text-only sends.
+          if (!fileInjected) {
+            const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+            if (fileInputs.length > 0) {
+              fileInputs.forEach((targetInput) => {
+                try {
+                  const dt = new DataTransfer();
+                  dt.items.add(fileObj);
+                  const propDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files");
+                  if (propDesc && propDesc.set) {
+                    propDesc.set.call(targetInput, dt.files);
+                  } else {
+                    targetInput.files = dt.files;
+                  }
+                  const evtOpts = { bubbles: true, cancelable: true, composed: true };
+                  targetInput.dispatchEvent(new Event("input", evtOpts));
+                  targetInput.dispatchEvent(new Event("change", evtOpts));
+                } catch (e) {}
+              });
+              fileInjected = true;
+            } else if (elapsed % 1200 < pollInterval) {
+              const openMenu = document.querySelector('div[data-testid="attach-menu-popover"]') ||
+                               document.querySelector('div[data-animate-dropdown-item="true"]') ||
+                               document.querySelector('ul[role="menu"]');
 
-            // Trigger 2: Drag and Drop
-            dropFileOnWhatsApp(fileObj);
+              if (openMenu) {
+                const menuBtn = isDocument
+                  ? openMenu.querySelector('button[aria-label="Document"]') ||
+                    openMenu.querySelector('[aria-label="Document"]') ||
+                    document.querySelector('[aria-label="Document"]') ||
+                    openMenu.querySelector('span[data-icon="attach-document"]')?.closest('[role="button"], button, li') ||
+                    Array.from(openMenu.querySelectorAll("li, button, [role=button]")).find(el => /^document$/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()))
+                  : openMenu.querySelector('button[aria-label="Photos & videos"]') ||
+                    openMenu.querySelector('[aria-label="Photos & videos"]') ||
+                    document.querySelector('[aria-label="Photos & videos"]') ||
+                    openMenu.querySelector('span[data-icon="attach-image"]')?.closest('[role="button"], button, li') ||
+                    Array.from(openMenu.querySelectorAll("li, button, [role=button]")).find(el => /photo|image/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()));
 
-            // Trigger 3: Attach Button & Menu Item Selection
-            const openMenu = document.querySelector('div[data-animate-dropdown-item="true"]') ||
-                             document.querySelector('div[data-testid="attach-menu-popover"]') ||
-                             document.querySelector('ul[role="menu"]') ||
-                             document.querySelector('div[role="application"]');
-
-            if (openMenu) {
-              // Attach menu is open -> Click Document or Image menu item
-              let menuBtn = null;
-              if (isDocument) {
-                menuBtn = openMenu.querySelector('span[data-icon="attach-document"]')?.closest("button") ||
-                          openMenu.querySelector('span[data-icon="attach-document"]')?.closest("li") ||
-                          openMenu.querySelector('span[data-icon="attach-document"]')?.closest("div") ||
-                          openMenu.querySelector('span[data-icon="document"]')?.closest("button") ||
-                          openMenu.querySelector('span[data-icon="document"]')?.closest("li") ||
-                          openMenu.querySelector('button[aria-label="Document"]') ||
-                          openMenu.querySelector('li[aria-label="Document"]') ||
-                          Array.from(openMenu.querySelectorAll("li, button, div")).find(el => /document/i.test(el.innerText || ""));
-              } else {
-                menuBtn = openMenu.querySelector('span[data-icon="attach-image"]')?.closest("button") ||
-                          openMenu.querySelector('span[data-icon="attach-image"]')?.closest("li") ||
-                          openMenu.querySelector('span[data-icon="attach-image"]')?.closest("div") ||
-                          openMenu.querySelector('span[data-icon="image"]')?.closest("button") ||
-                          openMenu.querySelector('span[data-icon="image"]')?.closest("li") ||
-                          openMenu.querySelector('button[aria-label="Photos & videos"]') ||
-                          openMenu.querySelector('li[aria-label="Photos & videos"]') ||
-                          Array.from(openMenu.querySelectorAll("li, button, div")).find(el => /photo|image/i.test(el.innerText || ""));
-              }
-
-              if (menuBtn) {
-                clickElement(menuBtn);
-              }
-            } else {
-              // Attach menu is not open -> Click Attach icon
-              if (attachClickCount < 5) {
-                const attachBtn = document.querySelector('footer div[title="Attach"]') ||
-                                   document.querySelector('footer div[aria-label="Attach"]') ||
-                                   document.querySelector('footer button[aria-label="Attach"]') ||
-                                   document.querySelector('footer button[title="Attach"]') ||
+                if (menuBtn) clickElement(menuBtn);
+              } else if (attachClickCount < 5) {
+                const attachBtn = document.querySelector('footer [aria-label="Attach"]') ||
+                                   document.querySelector('footer [title="Attach"]') ||
                                    document.querySelector('footer span[data-icon="clip"]')?.closest("button") ||
-                                   document.querySelector('footer span[data-icon="plus"]')?.closest("button") ||
-                                   document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest("button") ||
-                                   document.querySelector('footer span[data-icon="clip"]') ||
-                                   document.querySelector('footer span[data-icon="plus"]');
-
+                                   document.querySelector('footer span[data-icon="plus"]')?.closest("button");
                 if (attachBtn) {
                   attachClickCount++;
                   clickElement(attachBtn);
                 }
               }
             }
-
-            // Trigger 4: Inject File Object into ALL <input type="file"> elements
-            const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-            fileInputs.forEach((targetInput) => {
-              try {
-                const dt = new DataTransfer();
-                dt.items.add(fileObj);
-                const propDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files");
-                if (propDesc && propDesc.set) {
-                  propDesc.set.call(targetInput, dt.files);
-                } else {
-                  targetInput.files = dt.files;
-                }
-                const evtOpts = { bubbles: true, cancelable: true, composed: true };
-                targetInput.dispatchEvent(new Event("change", evtOpts));
-                targetInput.dispatchEvent(new Event("input", evtOpts));
-              } catch (e) {}
-            });
           }
 
           // Check for Media / Document Preview Modal
