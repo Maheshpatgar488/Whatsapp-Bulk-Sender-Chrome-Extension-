@@ -581,6 +581,13 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         // Assign native files
         targetInput.files = dt.files;
 
+        try {
+          Object.defineProperty(targetInput, "files", {
+            get: () => dt.files,
+            configurable: true
+          });
+        } catch (e) {}
+
         // Reset React's internal valueTracker if present
         if (targetInput._valueTracker) {
           try { targetInput._valueTracker.setValue(""); } catch (e) {}
@@ -633,40 +640,59 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
       if (mediaPayload && mediaPayload.base64) {
         const fileObj = createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
         if (fileObj) {
-          // A. CHECK IF MEDIA PREVIEW VIEW IS ACTIVE & GET MEDIA SEND BUTTON
-          const isPreviewActive = !!(
-            document.querySelector('div[data-testid="media-caption-input-container"]') ||
-            document.querySelector('div[aria-label="Add a caption"]') ||
+          // Clear any stale text sitting in the main chat footer input box on initial run
+          if (elapsed === pollInterval) {
+            const footerInput = document.querySelector('footer div[contenteditable="true"]');
+            if (footerInput && footerInput.innerText.trim().length > 0) {
+              footerInput.focus();
+              try {
+                document.execCommand("selectAll", false, null);
+                document.execCommand("delete", false, null);
+              } catch (e) {
+                footerInput.innerText = "";
+              }
+            }
+          }
+
+          // A. CHECK IF MEDIA PREVIEW VIEW IS ACTIVE (Must be the media viewer modal, NEVER main footer)
+          const mediaViewer =
+            document.querySelector('div[data-testid="media-caption-input-container"]')?.closest('div[role="region"], div[data-animate-media-viewer="true"], div#app, body') ||
             document.querySelector('div[data-animate-media-viewer="true"]') ||
-            document.querySelector('span[data-icon="wds-send-solid"]') ||
-            document.querySelector('span[data-icon="send-filled"]')
+            document.querySelector('div[data-testid="media-viewer"]') ||
+            (document.querySelector('div[aria-label="Add a caption"]') ? document.querySelector('div[aria-label="Add a caption"]').closest('div[role="region"], div#app, body') : null);
+
+          const isPreviewActive = !!(
+            mediaViewer && (
+              mediaViewer.querySelector('div[data-testid="media-caption-input-container"]') ||
+              mediaViewer.querySelector('div[aria-label="Add a caption"]') ||
+              mediaViewer.querySelector('div[contenteditable="true"]')
+            ) && !mediaViewer.closest('footer')
           );
 
           let sendBtn = null;
-          if (isPreviewActive) {
+          if (isPreviewActive && mediaViewer) {
+            // Locate send button strictly within the media viewer (exclude footer)
             sendBtn =
-              document.querySelector('span[data-icon="wds-send-solid"]')?.closest('button, [role="button"], div[role="button"]') ||
-              document.querySelector('span[data-icon="send-filled"]')?.closest('button, [role="button"], div[role="button"]') ||
-              document.querySelector('div[data-testid="media-caption-input-container"]')?.closest('div[role="region"], div[data-animate-media-viewer="true"], div#app, body')?.querySelector('span[data-icon="send"]')?.closest('button, [role="button"], div[role="button"]') ||
-              document.querySelector('div[data-animate-media-viewer="true"] span[data-icon="send"]')?.closest('button, [role="button"], div[role="button"]') ||
-              Array.from(document.querySelectorAll('div[role="button"], button')).find(el => {
-                if (el.closest('footer')) return false; // Exclude main chat footer button!
-                const label = (el.getAttribute("aria-label") || el.getAttribute("title") || "").toLowerCase();
-                return (label === "send" || label.includes("send")) && el.offsetWidth > 0;
+              mediaViewer.querySelector('div[data-testid="media-caption-input-container"]')?.parentElement?.querySelector('span[data-icon="send"], span[data-icon="wds-send-solid"], span[data-icon="send-filled"]')?.closest('button, [role="button"], div[role="button"]') ||
+              Array.from(mediaViewer.querySelectorAll('span[data-icon="send"], span[data-icon="wds-send-solid"], span[data-icon="send-filled"]'))
+                .map(s => s.closest('button, [role="button"], div[role="button"]'))
+                .find(b => b && !b.closest('footer')) ||
+              Array.from(mediaViewer.querySelectorAll('button, div[role="button"]')).find(b => {
+                if (b.closest('footer')) return false;
+                const label = (b.getAttribute("aria-label") || b.getAttribute("title") || "").toLowerCase();
+                return label === "send" || label.includes("send");
               });
           }
 
-          // IF SEND BUTTON IS VISIBLE (Document Editor Preview Active):
-          if (sendBtn) {
+          // IF MEDIA PREVIEW IS ACTIVE AND MEDIA SEND BUTTON IS FOUND:
+          if (isPreviewActive && sendBtn) {
             clearInterval(timer);
 
-            // Add caption inside preview modal if present
+            // Add caption strictly inside the media viewer caption box
             if (captionText && captionText.trim().length > 0) {
-              const captionBox = document.querySelector('div[data-testid="media-caption-input-container"] div[contenteditable="true"]') ||
-                                 document.querySelector('div[aria-label="Add a caption"]') ||
-                                 document.querySelector('div[data-animate-media-viewer="true"] div[contenteditable="true"]') ||
-                                 document.querySelector('div[role="region"] div[contenteditable="true"]') ||
-                                 document.querySelector('div[contenteditable="true"]');
+              const captionBox = mediaViewer.querySelector('div[data-testid="media-caption-input-container"] div[contenteditable="true"]') ||
+                                 mediaViewer.querySelector('div[aria-label="Add a caption"]') ||
+                                 mediaViewer.querySelector('div[contenteditable="true"]');
               if (captionBox) {
                 captionBox.focus();
                 try {
@@ -696,39 +722,41 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
                            document.querySelector('ul[role="menu"]') ||
                            document.querySelector('div[role="application"]');
 
-          // If popover menu is not open yet, click attach button
-          if (!openMenu && !attachMenuOpened) {
-            const attachBtn = document.querySelector('footer [aria-label="Attach"]') ||
-                               document.querySelector('footer [title="Attach"]') ||
-                               document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
-                               document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
-                               document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
-                               document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]') ||
-                               Array.from(document.querySelectorAll('footer [role="button"], footer button')).find(el => /attach/i.test(el.getAttribute("aria-label") || el.getAttribute("title") || ""));
+          if (openMenu) {
+            // Attach menu is open: inject into its document file input
+            if (now - lastInjectionTime > 3000) {
+              const popoverInputs = Array.from(openMenu.querySelectorAll('input[type="file"]'));
+              const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+              const candidateInputs = popoverInputs.length > 0 ? popoverInputs : allInputs;
 
-            if (attachBtn) {
-              attachMenuOpened = true;
-              clickElement(attachBtn);
+              let targetInput = candidateInputs.find(i => isDocument 
+                ? (i.accept === "*" || i.accept.includes("*/*") || (!i.accept.includes("image") && !i.accept.includes("video")))
+                : (i.accept.includes("image") || i.accept === "*")
+              ) || allInputs.find(i => isDocument 
+                ? (i.accept === "*" || i.accept.includes("*/*") || (!i.accept.includes("image") && !i.accept.includes("video")))
+                : (i.accept.includes("image") || i.accept === "*")
+              ) || candidateInputs[0];
+
+              if (targetInput) {
+                lastInjectionTime = now;
+                injectFileIntoInput(targetInput, fileObj);
+              }
             }
-          }
+          } else {
+            // If popover menu is not open yet, click attach button periodically
+            if (elapsed % 1200 === 0 || !attachMenuOpened) {
+              attachMenuOpened = true;
+              const attachBtn = document.querySelector('footer [aria-label="Attach"]') ||
+                                 document.querySelector('footer [title="Attach"]') ||
+                                 document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
+                                 document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
+                                 document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
+                                 document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]') ||
+                                 Array.from(document.querySelectorAll('footer [role="button"], footer button')).find(el => /attach/i.test(el.getAttribute("aria-label") || el.getAttribute("title") || ""));
 
-          // Only attempt injection once every 4 seconds to prevent repeated attach loops
-          if (now - lastInjectionTime > 4000) {
-            const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-            const popoverInputs = openMenu ? Array.from(openMenu.querySelectorAll('input[type="file"]')) : [];
-            const candidateInputs = popoverInputs.length > 0 ? popoverInputs : allInputs;
-            
-            let targetInput = candidateInputs.find(i => isDocument 
-              ? (i.accept === "*" || i.accept.includes("*/*") || (!i.accept.includes("image") && !i.accept.includes("video")))
-              : (i.accept.includes("image") || i.accept === "*")
-            ) || allInputs.find(i => isDocument 
-              ? (i.accept === "*" || i.accept.includes("*/*") || (!i.accept.includes("image") && !i.accept.includes("video")))
-              : (i.accept.includes("image") || i.accept === "*")
-            ) || candidateInputs[0];
-
-            if (targetInput) {
-              lastInjectionTime = now;
-              injectFileIntoInput(targetInput, fileObj);
+              if (attachBtn) {
+                clickElement(attachBtn);
+              }
             }
           }
         }
