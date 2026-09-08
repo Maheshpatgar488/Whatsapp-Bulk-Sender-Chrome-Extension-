@@ -977,7 +977,7 @@ function generateOrderId(plan) {
 function updateQrForSelectedPlan() {
   activeTxnOrderId = generateOrderId(selectedModalPlan);
   const amount = selectedModalPlan === "6_month" ? 1299 : 749;
-  const upiPayload = `upi://pay?pa=maheshpatgar488-1@okicici&pn=Mahesh%20Patgar&am=${amount}&tr=${activeTxnOrderId}&tn=BulkSender_${selectedModalPlan}&cu=INR`;
+  const upiPayload = `upi://pay?pa=maheshpatgar488-1@oksbi&pn=Mahesh%20Patgar&am=${amount}&tr=${activeTxnOrderId}&tn=BulkSender_${selectedModalPlan}&cu=INR`;
   
   if (upiQrCodeImg) {
     upiQrCodeImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(upiPayload)}`;
