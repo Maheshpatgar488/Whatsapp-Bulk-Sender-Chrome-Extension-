@@ -510,7 +510,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
   return new Promise((resolve) => {
     let elapsed = 0;
     const pollInterval = 400;
-    const maxTimeout = 35000;
+    const maxTimeout = 40000;
     let hasInjectedMedia = false;
     let isInjectingMedia = false;
     let attachClickCount = 0;
@@ -547,6 +547,35 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
       }
     }
 
+    // Helper: Drag-and-Drop file dispatch directly onto WhatsApp Web chat panel
+    function dropFileOnWhatsApp(fileObj) {
+      const dropTargets = [
+        document.querySelector('#main'),
+        document.querySelector('div[data-testid="conversation-panel-wrapper"]'),
+        document.querySelector('div[data-testid="conversation-panel-body"]'),
+        document.querySelector('footer'),
+        document.querySelector('div#app'),
+        document.body
+      ].filter(Boolean);
+
+      for (const target of dropTargets) {
+        try {
+          const dt = new DataTransfer();
+          dt.items.add(fileObj);
+
+          const dragEnterEvt = new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: dt });
+          const dragOverEvt = new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt });
+          const dropEvt = new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt });
+
+          target.dispatchEvent(dragEnterEvt);
+          target.dispatchEvent(dragOverEvt);
+          target.dispatchEvent(dropEvt);
+        } catch (e) {
+          console.error("Drag-and-Drop event dispatch error:", e);
+        }
+      }
+    }
+
     const timer = setInterval(async () => {
       elapsed += pollInterval;
 
@@ -575,46 +604,49 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
           isInjectingMedia = true;
           if (mediaAttemptTime === 0) mediaAttemptTime = Date.now();
 
-          // 2a. Query for existing file inputs across the DOM
-          let fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+          const fileObj = createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
+          if (fileObj) {
+            const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
 
-          // 2b. If no file inputs found in DOM, click attach button (+) to mount file inputs
-          if (fileInputs.length === 0 && attachClickCount < 3) {
-            const attachBtn = document.querySelector('footer div[title="Attach"]') ||
-                               document.querySelector('footer div[aria-label="Attach"]') ||
-                               document.querySelector('footer button[aria-label="Attach"]') ||
-                               document.querySelector('footer button[title="Attach"]') ||
-                               document.querySelector('footer span[data-icon="plus"]')?.closest('div[role="button"]') ||
-                               document.querySelector('footer span[data-icon="plus"]')?.closest('button') ||
-                               document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('div[role="button"]') ||
-                               document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button') ||
-                               document.querySelector('footer span[data-icon="clip"]')?.closest('div[role="button"]') ||
-                               document.querySelector('footer span[data-icon="clip"]')?.closest('button') ||
-                               document.querySelector('div[title="Attach"]') ||
-                               document.querySelector('div[aria-label="Attach"]') ||
-                               document.querySelector('button[aria-label="Attach"]') ||
-                               document.querySelector('button[title="Attach"]') ||
-                               document.querySelector('span[data-icon="plus"]')?.closest('div[role="button"]') ||
-                               document.querySelector('span[data-icon="plus"]')?.closest('button') ||
-                               document.querySelector('span[data-icon="attach-menu-plus"]')?.closest('div[role="button"]') ||
-                               document.querySelector('span[data-icon="attach-menu-plus"]')?.closest('button') ||
-                               document.querySelector('span[data-icon="clip"]')?.closest('div[role="button"]') ||
-                               document.querySelector('span[data-icon="clip"]')?.closest('button');
+            // 2a. Attempt Drag-and-Drop file dispatch directly onto chat panel
+            dropFileOnWhatsApp(fileObj);
 
-            if (attachBtn) {
-              attachClickCount++;
-              clickElement(attachBtn);
-              await new Promise((r) => setTimeout(r, 600));
-              fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+            // 2b. Query for existing file inputs across the DOM
+            let fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+
+            // 2c. If no file inputs found in DOM, click attach button (+) to mount file inputs
+            if (fileInputs.length === 0 && attachClickCount < 3) {
+              const attachBtn = document.querySelector('footer div[title="Attach"]') ||
+                                 document.querySelector('footer div[aria-label="Attach"]') ||
+                                 document.querySelector('footer button[aria-label="Attach"]') ||
+                                 document.querySelector('footer button[title="Attach"]') ||
+                                 document.querySelector('footer span[data-icon="plus"]')?.closest('div[role="button"]') ||
+                                 document.querySelector('footer span[data-icon="plus"]')?.closest('button') ||
+                                 document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('div[role="button"]') ||
+                                 document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button') ||
+                                 document.querySelector('footer span[data-icon="clip"]')?.closest('div[role="button"]') ||
+                                 document.querySelector('footer span[data-icon="clip"]')?.closest('button') ||
+                                 document.querySelector('div[title="Attach"]') ||
+                                 document.querySelector('div[aria-label="Attach"]') ||
+                                 document.querySelector('button[aria-label="Attach"]') ||
+                                 document.querySelector('button[title="Attach"]') ||
+                                 document.querySelector('span[data-icon="plus"]')?.closest('div[role="button"]') ||
+                                 document.querySelector('span[data-icon="plus"]')?.closest('button') ||
+                                 document.querySelector('span[data-icon="attach-menu-plus"]')?.closest('div[role="button"]') ||
+                                 document.querySelector('span[data-icon="attach-menu-plus"]')?.closest('button') ||
+                                 document.querySelector('span[data-icon="clip"]')?.closest('div[role="button"]') ||
+                                 document.querySelector('span[data-icon="clip"]')?.closest('button');
+
+              if (attachBtn) {
+                attachClickCount++;
+                clickElement(attachBtn);
+                await new Promise((r) => setTimeout(r, 600));
+                fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+              }
             }
-          }
 
-          // 2c. Inject File directly into target file input
-          if (fileInputs.length > 0) {
-            const fileObj = createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
-            if (fileObj) {
-              const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
-
+            // 2d. Inject File directly into target file input
+            if (fileInputs.length > 0) {
               let targetInput = null;
               if (isDocument) {
                 targetInput = fileInputs.find((i) => i.accept === "*" || i.accept === "*/*" || i.accept.includes("document") || i.accept.includes("pdf")) ||
@@ -631,26 +663,37 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
                   const dt = new DataTransfer();
                   dt.items.add(fileObj);
                   
+                  // React 18 compatible property setter
                   try {
-                    Object.defineProperty(targetInput, "files", { value: dt.files, writable: true, configurable: true });
+                    const propDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files");
+                    if (propDesc && propDesc.set) {
+                      propDesc.set.call(targetInput, dt.files);
+                    } else {
+                      targetInput.files = dt.files;
+                    }
                   } catch (e) {
-                    targetInput.files = dt.files;
+                    try {
+                      Object.defineProperty(targetInput, "files", { value: dt.files, writable: true, configurable: true });
+                    } catch (err) {
+                      targetInput.files = dt.files;
+                    }
                   }
 
-                  const evtOpts = { bubbles: true, cancelable: true };
+                  const evtOpts = { bubbles: true, cancelable: true, composed: true };
                   targetInput.dispatchEvent(new Event("change", evtOpts));
                   targetInput.dispatchEvent(new Event("input", evtOpts));
-                  hasInjectedMedia = true;
                 } catch (err) {
                   console.error("Target input dispatch error:", err);
                 }
               }
             }
+
+            hasInjectedMedia = true;
           }
           isInjectingMedia = false;
         }
 
-        // 2d. Check for Media / Document Preview Modal
+        // 2e. Check for Media / Document Preview Modal
         const previewModal = document.querySelector('div[data-animate-modal-popup="true"]') ||
                              document.querySelector('div[data-testid="media-editor-container"]') ||
                              document.querySelector('div[data-testid="document-editor"]') ||
@@ -689,8 +732,8 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         }
       }
 
-      // 3. FALLBACK FOR TEXT SENDING (If no media attached OR if media preview modal did not dispatch after 12 seconds)
-      const maxMediaWait = 12000;
+      // 3. FALLBACK FOR TEXT SENDING (If no media attached OR if media preview modal did not dispatch after 18 seconds)
+      const maxMediaWait = 18000;
       const shouldSendTextOnly = (!mediaPayload || !mediaPayload.base64) || (mediaAttemptTime > 0 && Date.now() - mediaAttemptTime > maxMediaWait);
 
       if (shouldSendTextOnly) {
