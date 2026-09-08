@@ -207,7 +207,7 @@ document.querySelectorAll(".chip-tag").forEach((chip) => {
   });
 });
 
-// Handle Media File Selection
+// Handle Media File Selection (Photo & Video Only)
 mediaFile.addEventListener("change", (e) => {
   const file = e.target.files[0];
   if (!file) {
@@ -215,39 +215,44 @@ mediaFile.addEventListener("change", (e) => {
     return;
   }
 
-  // File size limit check (WhatsApp Web limit is 16MB for video/audio, 100MB for docs)
+  // Validate Photo & Video types
+  const isImage = file.type.startsWith("image/");
+  const isVideo = file.type.startsWith("video/");
+
+  if (!isImage && !isVideo) {
+    alert("Please select a Photo (JPG, PNG) or Video (MP4) file.\n\nDocument and PDF attachments are temporarily disabled.");
+    clearMedia();
+    return;
+  }
+
+  // File size limit check (WhatsApp Web limit is 16MB for video/audio)
   if (file.size > 25 * 1024 * 1024) {
-    alert("Media file size exceeds 25MB. Please choose a smaller file for fast sending.");
+    alert("Media file size exceeds 25MB. Please choose a smaller photo or video for fast sending.");
     clearMedia();
     return;
   }
 
   const reader = new FileReader();
   reader.onload = (event) => {
-    const isTextFile = file.name.endsWith(".txt") || file.name.endsWith(".text") || file.name.endsWith(".log") || file.name.endsWith(".md") || file.type.includes("text");
-
     attachedMedia = {
       name: file.name,
-      type: file.type || (isTextFile ? "text/plain" : "application/octet-stream"),
+      type: file.type || (isImage ? "image/jpeg" : "video/mp4"),
       size: file.size,
       base64: event.target.result
     };
 
-    mediaBadge.textContent = "✓ 1 File Attached";
+    mediaBadge.textContent = isImage ? "✓ Photo Attached" : "✓ Video Attached";
     mediaFileName.textContent = `${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
     mediaPreviewContainer.style.display = "flex";
 
-    if (file.type.startsWith("image/")) {
+    if (isImage) {
       mediaThumb.src = event.target.result;
       mediaThumb.style.display = "block";
       mediaIcon.style.display = "none";
     } else {
       mediaThumb.style.display = "none";
       mediaIcon.style.display = "inline";
-      if (file.type.includes("video")) mediaIcon.textContent = "🎥";
-      else if (file.type.includes("pdf")) mediaIcon.textContent = "📕";
-      else if (isTextFile) mediaIcon.textContent = "📝";
-      else mediaIcon.textContent = "📄";
+      mediaIcon.textContent = "🎥";
     }
 
     log(`Attached media: ${file.name}`, "success");
@@ -333,7 +338,7 @@ function parseVCF(vcfText) {
   return parsed;
 }
 
-// Parse Plain Text (.txt) contacts (Line-by-line, comma, colon, tab separated or numbers only)
+// Parse Plain Text (.txt) contacts (Line-by-line: Name, Phone, or Name only)
 function parseTXT(text) {
   const lines = text.split(/\r?\n/);
   const parsed = [];
@@ -342,13 +347,12 @@ function parseTXT(text) {
     const rawLine = lines[i].trim();
     if (!rawLine || rawLine.startsWith("#") || rawLine.startsWith("//")) continue;
 
-    let name = "Customer";
-    let rawPhone = rawLine;
+    let name = "";
+    let rawPhone = "";
 
     // Check if line contains separator: comma, colon, pipe, or tab
     if (/[,\t:|]/.test(rawLine)) {
       const parts = rawLine.split(/[,\t:|]/);
-      // Case A: Name, Phone (or Phone, Name)
       if (parts.length >= 2) {
         const part0Clean = sanitizePhoneNumber(parts[0]);
         const part1Clean = sanitizePhoneNumber(parts[1]);
@@ -359,16 +363,31 @@ function parseTXT(text) {
         } else if (part1Clean.length >= 8) {
           name = parts[0].trim() || "Customer";
           rawPhone = parts[1];
+        } else {
+          name = parts[0].trim();
+          rawPhone = parts[1].trim();
         }
+      }
+    } else {
+      const cleanOnlyPhone = sanitizePhoneNumber(rawLine);
+      if (cleanOnlyPhone.length >= 8) {
+        rawPhone = rawLine;
+        name = "Customer";
+      } else {
+        // Line is a contact name!
+        name = rawLine;
+        rawPhone = "";
       }
     }
 
     const cleanPhone = sanitizePhoneNumber(rawPhone);
-    if (cleanPhone && cleanPhone.length >= 8) {
+    const finalName = name.trim() || (cleanPhone ? "Customer" : "");
+
+    if (finalName || (cleanPhone && cleanPhone.length >= 8)) {
       parsed.push({
-        Name: name,
-        Phone: cleanPhone,
-        _parsedName: name,
+        Name: finalName || cleanPhone,
+        Phone: cleanPhone || finalName,
+        _parsedName: finalName || cleanPhone,
         _parsedPhone: cleanPhone
       });
     }
@@ -486,7 +505,7 @@ fileInput.addEventListener("change", (e) => {
           _parsedName: name,
           _parsedPhone: phone
         };
-      }).filter((c) => c._parsedPhone.length >= 8);
+      }).filter((c) => c._parsedPhone.length >= 8 || (c._parsedName && c._parsedName !== "Customer"));
 
       loadContactsIntoUI(parsedRows, file.name);
     } catch (err) {
@@ -515,14 +534,15 @@ function buildMessage(template, contact) {
   return message;
 }
 
-// In-page automation function executed on WhatsApp Web tab
-async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
+// In-page automation function executed on WhatsApp Web tab via search bar
+async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, captionText) {
   return new Promise((resolve) => {
     let elapsed = 0;
-    const pollInterval = 350;
-    const maxTimeout = 45000;
-    let attachMenuOpened = false;
-    let chatWaitElapsed = 0;
+    const pollInterval = 300;
+    const maxTimeout = 40000;
+    let step = "SEARCH_CONTACT"; // Steps: SEARCH_CONTACT -> WAIT_CHAT_OPEN -> ATTACH_OR_SEND
+    let stepElapsed = 0;
+    let lastAttachClick = 0;
     let lastInjectionTime = 0;
 
     // Helper: Synthetic Mouse & Pointer Event trigger for React / Web Components
@@ -545,7 +565,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
       }
     }
 
-    // Helper: Convert base64 DataURL back to a DOM File object synchronously (100% CSP safe)
+    // Helper: Convert base64 DataURL back to a DOM File object synchronously
     function createDOMFile(base64Data, name, type) {
       try {
         if (!base64Data) return null;
@@ -555,7 +575,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         }
         base64Str = base64Str.replace(/[\r\n\s]/g, "");
 
-        const mime = type || "application/pdf";
+        const mime = type || "image/jpeg";
         const binaryStr = atob(base64Str);
         const len = binaryStr.length;
         const bytes = new Uint8Array(len);
@@ -575,10 +595,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         const dt = new DataTransfer();
         dt.items.add(fileObj);
 
-        // Reset value to ensure change event fires
         try { targetInput.value = ""; } catch (e) {}
-
-        // Assign native files
         targetInput.files = dt.files;
 
         try {
@@ -588,7 +605,6 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
           });
         } catch (e) {}
 
-        // Reset React's internal valueTracker if present
         if (targetInput._valueTracker) {
           try { targetInput._valueTracker.setValue(""); } catch (e) {}
         }
@@ -603,25 +619,38 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
       }
     }
 
-    const timer = setInterval(async () => {
-      // Wait for WhatsApp Web chat panel UI to finish loading
-      const isChatReady = !!(document.querySelector('#main') || document.querySelector('footer') || document.querySelector('div[contenteditable="true"]'));
-      if (!isChatReady) {
-        chatWaitElapsed += pollInterval;
-        if (chatWaitElapsed >= 25000) {
-          clearInterval(timer);
-          return resolve({ success: false, error: "WhatsApp Web chat panel did not load. Please check network connection." });
-        }
-        return; // Wait for chat UI to mount
+    // Helper: Clear WhatsApp Web left-hand search box
+    function clearSearchInput() {
+      const clearBtn = document.querySelector('button[aria-label="Cancel search"]') ||
+                       document.querySelector('span[data-icon="x-alt"]')?.closest('button') ||
+                       document.querySelector('span[data-icon="x"]')?.closest('button') ||
+                       document.querySelector('button[aria-label="Clear search"]');
+      if (clearBtn) {
+        clickElement(clearBtn);
       }
+      const searchBox = document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
+                        document.querySelector('div[data-testid="chat-list-search"]') ||
+                        document.querySelector('div[role="textbox"][aria-label*="Search"]') ||
+                        document.querySelector('#side div[contenteditable="true"]');
+      if (searchBox) {
+        searchBox.focus();
+        try {
+          document.execCommand("selectAll", false, null);
+          document.execCommand("delete", false, null);
+        } catch (e) {
+          searchBox.innerText = "";
+        }
+      }
+    }
 
+    const timer = setInterval(async () => {
       elapsed += pollInterval;
+      stepElapsed += pollInterval;
 
-      // 1. Check for Invalid Phone Number / Error Dialog
+      // 1. Check for Invalid Phone / Error Dialog
       const modal = document.querySelector('div[data-animate-modal-popup="true"]') ||
                     document.querySelector('div[role="dialog"]') ||
                     document.querySelector('div[data-testid="popup-contents"]');
-
       if (modal) {
         const text = (modal.innerText || "").toLowerCase();
         if (
@@ -632,29 +661,110 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
           clearInterval(timer);
           const okBtn = modal.querySelector("button");
           clickElement(okBtn);
-          return resolve({ success: false, error: "Invalid WhatsApp Number / Not on WhatsApp" });
+          clearSearchInput();
+          return resolve({ success: false, error: `Contact "${contactQuery}" is not on WhatsApp or invalid` });
         }
       }
 
-      // 2. MEDIA ATTACHMENT FLOW (Strict PDF / Document / Image mode)
-      if (mediaPayload && mediaPayload.base64) {
-        const fileObj = createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
-        if (fileObj) {
-          // Clear any stale text sitting in the main chat footer input box on initial run
-          if (elapsed === pollInterval) {
-            const footerInput = document.querySelector('footer div[contenteditable="true"]');
-            if (footerInput && footerInput.innerText.trim().length > 0) {
-              footerInput.focus();
-              try {
-                document.execCommand("selectAll", false, null);
-                document.execCommand("delete", false, null);
-              } catch (e) {
-                footerInput.innerText = "";
-              }
-            }
+      // STEP 1: SEARCH CONTACT IN LEFT-HAND SEARCH BAR
+      if (step === "SEARCH_CONTACT") {
+        const searchBox = document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
+                          document.querySelector('div[data-testid="chat-list-search"]') ||
+                          document.querySelector('div[role="textbox"][aria-label*="Search"]') ||
+                          document.querySelector('div[role="textbox"][title*="Search"]') ||
+                          document.querySelector('#side div[contenteditable="true"]') ||
+                          document.querySelector('div[role="textbox"]');
+
+        if (!searchBox) {
+          if (stepElapsed > 15000) {
+            clearInterval(timer);
+            return resolve({ success: false, error: "WhatsApp Web search box not found. Ensure WhatsApp Web is logged in." });
+          }
+          return;
+        }
+
+        // Clear search box first
+        clearSearchInput();
+
+        // Focus and type contact query
+        searchBox.focus();
+        try {
+          document.execCommand("selectAll", false, null);
+          document.execCommand("delete", false, null);
+          document.execCommand("insertText", false, contactQuery);
+        } catch (e) {
+          searchBox.innerText = contactQuery;
+        }
+        searchBox.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: contactQuery }));
+
+        // Move to waiting for search results and opening chat
+        step = "WAIT_CHAT_OPEN";
+        stepElapsed = 0;
+        return;
+      }
+
+      // STEP 2: WAIT FOR SEARCH RESULTS AND SELECT CHAT
+      if (step === "WAIT_CHAT_OPEN") {
+        // Wait at least 1000ms for WhatsApp search debouncing
+        if (stepElapsed >= 1000) {
+          const searchBox = document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
+                            document.querySelector('div[data-testid="chat-list-search"]') ||
+                            document.querySelector('div[role="textbox"][aria-label*="Search"]');
+
+          // Trigger Enter key on search box
+          if (searchBox && stepElapsed === 1000) {
+            const enterEvt = new KeyboardEvent("keydown", {
+              key: "Enter",
+              code: "Enter",
+              keyCode: 13,
+              which: 13,
+              bubbles: true,
+              cancelable: true
+            });
+            searchBox.dispatchEvent(enterEvt);
           }
 
-          // A. CHECK IF MEDIA PREVIEW VIEW IS ACTIVE (Must be the media viewer modal, NEVER main footer)
+          // Also look for first matching search result row
+          const chatResult = document.querySelector('div[aria-label="Search results."] div[role="listitem"]') ||
+                             document.querySelector('div[aria-label="Search results."] div[role="gridcell"]') ||
+                             document.querySelector('div[data-testid="chat-list"] div[role="listitem"]') ||
+                             document.querySelector('#pane-side div[role="listitem"]') ||
+                             document.querySelector('div[data-testid="cell-frame-container"]');
+
+          if (chatResult) {
+            clickElement(chatResult);
+          }
+
+          // Check if chat panel (#main) is now open
+          const isMainChatOpen = !!(document.querySelector('#main') && document.querySelector('#main footer'));
+          if (isMainChatOpen) {
+            step = "ATTACH_OR_SEND";
+            stepElapsed = 0;
+            return;
+          }
+
+          // Timeout waiting for chat to open (after 12s of searching)
+          if (stepElapsed >= 12000) {
+            clearInterval(timer);
+            clearSearchInput();
+            return resolve({ success: false, error: `Could not open chat for "${contactQuery}". No matching contact found in WhatsApp.` });
+          }
+        }
+        return;
+      }
+
+      // STEP 3: ATTACH PHOTO/VIDEO OR SEND TEXT MESSAGE
+      if (step === "ATTACH_OR_SEND") {
+        const hasMedia = !!(mediaPayload && mediaPayload.base64);
+
+        if (hasMedia) {
+          const fileObj = createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
+          if (!fileObj) {
+            clearInterval(timer);
+            return resolve({ success: false, error: "Failed to convert photo/video data to DOM File" });
+          }
+
+          // Check if Media Viewer Modal is open
           const mediaViewer =
             document.querySelector('div[data-testid="media-caption-input-container"]')?.closest('div[role="region"], div[data-animate-media-viewer="true"], div#app, body') ||
             document.querySelector('div[data-animate-media-viewer="true"]') ||
@@ -671,7 +781,6 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
 
           let sendBtn = null;
           if (isPreviewActive && mediaViewer) {
-            // Locate send button strictly within the media viewer (exclude footer)
             sendBtn =
               mediaViewer.querySelector('div[data-testid="media-caption-input-container"]')?.parentElement?.querySelector('span[data-icon="send"], span[data-icon="wds-send-solid"], span[data-icon="send-filled"]')?.closest('button, [role="button"], div[role="button"]') ||
               Array.from(mediaViewer.querySelectorAll('span[data-icon="send"], span[data-icon="wds-send-solid"], span[data-icon="send-filled"]'))
@@ -688,7 +797,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
           if (isPreviewActive && sendBtn) {
             clearInterval(timer);
 
-            // Add caption strictly inside the media viewer caption box
+            // Add caption inside media viewer if provided
             if (captionText && captionText.trim().length > 0) {
               const captionBox = mediaViewer.querySelector('div[data-testid="media-caption-input-container"] div[contenteditable="true"]') ||
                                  mediaViewer.querySelector('div[aria-label="Add a caption"]') ||
@@ -708,34 +817,32 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
             setTimeout(() => {
               const btn = sendBtn.tagName === "BUTTON" ? sendBtn : sendBtn.closest('button, [role="button"], div[role="button"]') || sendBtn;
               clickElement(btn);
-              setTimeout(() => resolve({ success: true, details: `Attached Media & Greeting Sent: ${mediaPayload.name}` }), 2000);
+
+              setTimeout(() => {
+                clearSearchInput();
+                resolve({ success: true, details: `Photo/Video & Greeting Sent to ${contactQuery}` });
+              }, 2000);
             }, 600);
             return;
           }
 
-          // B. INJECT FILE INTO WHATSAPP WEB (Controlled Single Injection with 4s Debounce)
+          // IF NOT IN PREVIEW YET: INJECT PHOTO/VIDEO INTO WHATSAPP
           const now = Date.now();
-          const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
-
           const openMenu = document.querySelector('div[data-testid="attach-menu-popover"]') ||
                            document.querySelector('div[data-animate-dropdown-item="true"]') ||
                            document.querySelector('ul[role="menu"]') ||
                            document.querySelector('div[role="application"]');
 
           if (openMenu) {
-            // Attach menu is open: inject into its document file input
+            // Attach menu is open: inject into Photos & Videos file input
             if (now - lastInjectionTime > 3000) {
               const popoverInputs = Array.from(openMenu.querySelectorAll('input[type="file"]'));
               const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
               const candidateInputs = popoverInputs.length > 0 ? popoverInputs : allInputs;
 
-              let targetInput = candidateInputs.find(i => isDocument 
-                ? (i.accept === "*" || i.accept.includes("*/*") || (!i.accept.includes("image") && !i.accept.includes("video")))
-                : (i.accept.includes("image") || i.accept === "*")
-              ) || allInputs.find(i => isDocument 
-                ? (i.accept === "*" || i.accept.includes("*/*") || (!i.accept.includes("image") && !i.accept.includes("video")))
-                : (i.accept.includes("image") || i.accept === "*")
-              ) || candidateInputs[0];
+              const targetInput = candidateInputs.find(i => i.accept && (i.accept.includes("image") || i.accept.includes("video"))) ||
+                                  allInputs.find(i => i.accept && (i.accept.includes("image") || i.accept.includes("video"))) ||
+                                  candidateInputs[0];
 
               if (targetInput) {
                 lastInjectionTime = now;
@@ -743,9 +850,9 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
               }
             }
           } else {
-            // If popover menu is not open yet, click attach button periodically
-            if (elapsed % 1200 === 0 || !attachMenuOpened) {
-              attachMenuOpened = true;
+            // Attach menu not open yet -> Click Attach (+) button
+            if (now - lastAttachClick > 1200) {
+              lastAttachClick = now;
               const attachBtn = document.querySelector('footer [aria-label="Attach"]') ||
                                  document.querySelector('footer [title="Attach"]') ||
                                  document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
@@ -759,57 +866,66 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
               }
             }
           }
-        }
+        } else {
+          // TEXT ONLY FLOW: Type into chat footer and click send
+          const inputBox = document.querySelector('#main footer div[contenteditable="true"]') ||
+                           document.querySelector('footer div[contenteditable="true"]');
 
-        // Strict Timeout
-        if (elapsed >= maxTimeout) {
-          clearInterval(timer);
-          return resolve({ success: false, error: `Could not attach PDF document (${mediaPayload.name}) to WhatsApp Web. Please ensure WhatsApp Web chat panel is open.` });
-        }
-      } else {
-        // 3. TEXT ONLY FLOW (No media attached)
-        const sendButton =
-          document.querySelector('footer button span[data-icon="send"]')?.closest("button") ||
-          document.querySelector('footer span[data-icon="send"]')?.closest("button") ||
-          document.querySelector('footer span[data-icon="send"]')?.closest('div[role="button"]') ||
-          document.querySelector('footer button[aria-label="Send"]') ||
-          document.querySelector('footer div[aria-label="Send"]') ||
-          document.querySelector('button span[data-icon="send"]')?.closest("button") ||
-          document.querySelector('span[data-icon="send"]')?.closest("button") ||
-          document.querySelector('button[aria-label="Send"]') ||
-          document.querySelector('button[data-testid="send"]');
+          if (inputBox && captionText && captionText.trim().length > 0) {
+            inputBox.focus();
+            try {
+              document.execCommand("selectAll", false, null);
+              document.execCommand("insertText", false, captionText);
+            } catch (e) {
+              inputBox.innerText = captionText;
+            }
+            inputBox.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: captionText }));
 
-        if (sendButton) {
-          clearInterval(timer);
-          setTimeout(() => {
-            const btn = sendButton.tagName === "BUTTON" ? sendButton : sendButton.closest("button") || sendButton;
-            btn.click();
-            setTimeout(() => resolve({ success: true, details: "Message Delivered via Send Button" }), 1500);
-          }, 500);
-          return;
-        }
+            setTimeout(() => {
+              const sendButton =
+                document.querySelector('footer button span[data-icon="send"]')?.closest("button") ||
+                document.querySelector('footer span[data-icon="send"]')?.closest("button") ||
+                document.querySelector('footer span[data-icon="wds-send-solid"]')?.closest('button, [role="button"]') ||
+                document.querySelector('footer span[data-icon="send-filled"]')?.closest('button, [role="button"]') ||
+                document.querySelector('footer button[aria-label="Send"]') ||
+                document.querySelector('footer div[aria-label="Send"]');
 
-        const inputBox = document.querySelector('footer div[contenteditable="true"]');
-        if (inputBox && inputBox.innerText.trim().length > 0 && elapsed > 3500) {
-          clearInterval(timer);
-          inputBox.focus();
-          const enterEvt = new KeyboardEvent("keydown", {
-            key: "Enter",
-            code: "Enter",
-            keyCode: 13,
-            which: 13,
-            bubbles: true,
-            cancelable: true
-          });
-          inputBox.dispatchEvent(enterEvt);
-          setTimeout(() => resolve({ success: true, details: "Message Delivered via Enter Key" }), 1500);
-          return;
+              if (sendButton) {
+                clearInterval(timer);
+                clickElement(sendButton);
+                setTimeout(() => {
+                  clearSearchInput();
+                  resolve({ success: true, details: `Message Sent to ${contactQuery}` });
+                }, 1500);
+              } else {
+                // Enter key fallback
+                clearInterval(timer);
+                inputBox.focus();
+                const enterEvt = new KeyboardEvent("keydown", {
+                  key: "Enter",
+                  code: "Enter",
+                  keyCode: 13,
+                  which: 13,
+                  bubbles: true,
+                  cancelable: true
+                });
+                inputBox.dispatchEvent(enterEvt);
+                setTimeout(() => {
+                  clearSearchInput();
+                  resolve({ success: true, details: `Message Sent to ${contactQuery} (Enter Key)` });
+                }, 1500);
+              }
+            }, 600);
+            return;
+          }
         }
+      }
 
-        if (elapsed >= maxTimeout) {
-          clearInterval(timer);
-          resolve({ success: false, error: "Timeout: Send button did not respond on WhatsApp Web" });
-        }
+      // Max Timeout
+      if (elapsed >= maxTimeout) {
+        clearInterval(timer);
+        clearSearchInput();
+        return resolve({ success: false, error: `Timeout processing "${contactQuery}". Please ensure WhatsApp Web is responsive.` });
       }
     }, pollInterval);
   });
@@ -889,6 +1005,18 @@ startBtn.addEventListener("click", async () => {
   let sent = 0;
   let failed = 0;
 
+  // Initial setup: For Live sending, ensure active tab is focused and reloaded ONCE if needed
+  if (!isSafeMode) {
+    try {
+      log("🔄 Initializing WhatsApp Web (one-time refresh/focus)...", "info");
+      await chrome.tabs.reload(activeTab.id);
+      // Wait for WhatsApp Web to reload and mount its interface
+      await new Promise((r) => setTimeout(r, 4500));
+    } catch (e) {
+      console.warn("Tab reload error:", e);
+    }
+  }
+
   for (let i = 0; i < contacts.length; i++) {
     if (!isSending) {
       log("⏹ Bulk sending process stopped by user.", "warning");
@@ -898,9 +1026,14 @@ startBtn.addEventListener("click", async () => {
     const contact = contacts[i];
     const personalizedMessage = buildMessage(template, contact);
 
+    // Contact query to search in WhatsApp Web search bar
+    const contactQuery = (contact._parsedName && contact._parsedName !== "Customer")
+      ? contact._parsedName
+      : (contact._parsedPhone || contact.Name || "Customer");
+
     if (isSafeMode) {
       // Safe Mode (Dry Run)
-      log(`[DRY RUN] Simulating send to ${contact._parsedName} (+${contact._parsedPhone}): "${personalizedMessage.substring(0, 40)}..."`, "info");
+      log(`[DRY RUN] Simulating search & send to "${contactQuery}" (+${contact._parsedPhone || "N/A"}): "${personalizedMessage.substring(0, 40)}..."`, "info");
       if (attachedMedia) log(`📎 [Attachment]: ${attachedMedia.name} (${(attachedMedia.size / 1024 / 1024).toFixed(2)} MB)`, "info");
 
       sent++;
@@ -909,7 +1042,7 @@ startBtn.addEventListener("click", async () => {
         ...contact,
         DeliveryStatus: "Simulated (Safe Mode)",
         Attachment: attachedMedia ? attachedMedia.name : "None",
-        Method: "Dry Run",
+        Method: "Dry Run (Search Bar)",
         Timestamp: new Date().toISOString(),
         SentMessage: personalizedMessage
       });
@@ -921,37 +1054,25 @@ startBtn.addEventListener("click", async () => {
         saveSubscriptionState();
       }
     } else {
-      // Live Sending Flow
-      log(`(${i + 1}/${contacts.length}) Opening chat for ${contact._parsedName} (+${contact._parsedPhone})...`, "info");
+      // Live Sending Flow (In-Page Search Bar - NO TAB RELOAD)
+      log(`(${i + 1}/${contacts.length}) Searching "${contactQuery}" in WhatsApp Web...`, "info");
 
-      // For media attached, use clean chat URL so text does not pre-fill main footer
-      const directUrl = attachedMedia
-        ? `https://web.whatsapp.com/send?phone=${contact._parsedPhone}`
-        : `https://web.whatsapp.com/send?phone=${contact._parsedPhone}&text=${encodeURIComponent(personalizedMessage)}`;
-      
       try {
-        // 1. Navigate active tab to direct URL
-        await chrome.tabs.update(activeTab.id, { url: directUrl });
-
-        // 2. Pause to allow WhatsApp Web router to mount and fill input
-        const initialWait = attachedMedia ? 4500 : 2500;
-        await new Promise((r) => setTimeout(r, initialWait));
-
-        // 3. Inject send automation in MAIN world context (direct access to WhatsApp Web React DOM)
+        // Inject search-and-send automation in MAIN world context (direct access to WhatsApp Web React DOM)
         let executionResults = null;
         try {
           executionResults = await chrome.scripting.executeScript({
             target: { tabId: activeTab.id },
-            func: triggerWhatsAppSendInPage,
-            args: [attachedMedia, personalizedMessage],
+            func: triggerWhatsAppSearchAndSendInPage,
+            args: [contactQuery, attachedMedia, personalizedMessage],
             world: "MAIN"
           });
         } catch (scriptErr) {
           console.warn("world: 'MAIN' execution fallback to ISOLATED:", scriptErr);
           executionResults = await chrome.scripting.executeScript({
             target: { tabId: activeTab.id },
-            func: triggerWhatsAppSendInPage,
-            args: [attachedMedia, personalizedMessage]
+            func: triggerWhatsAppSearchAndSendInPage,
+            args: [contactQuery, attachedMedia, personalizedMessage]
           });
         }
 
@@ -965,11 +1086,11 @@ startBtn.addEventListener("click", async () => {
             ...contact,
             DeliveryStatus: "Sent",
             Attachment: attachedMedia ? attachedMedia.name : "None",
-            Method: resultObj.details || "Dispatched",
+            Method: resultObj.details || "Search & Dispatched",
             Timestamp: new Date().toISOString(),
             SentMessage: personalizedMessage
           });
-          log(`✓ Sent successfully to ${contact._parsedName} (${resultObj.details})`, "success");
+          log(`✓ Sent successfully to "${contactQuery}" (${resultObj.details})`, "success");
 
           // Deduct Quota
           if (currentSubscription) {
@@ -978,7 +1099,7 @@ startBtn.addEventListener("click", async () => {
             saveSubscriptionState();
           }
         } else {
-          const errMsg = resultObj && resultObj.error ? resultObj.error : "Failed to click send button on WhatsApp Web";
+          const errMsg = resultObj && resultObj.error ? resultObj.error : "Failed to send to contact";
           throw new Error(errMsg);
         }
 
@@ -994,7 +1115,7 @@ startBtn.addEventListener("click", async () => {
           Timestamp: new Date().toISOString(),
           SentMessage: personalizedMessage
         });
-        log(`✗ Error for ${contact._parsedName}: ${errMessage}`, "error");
+        log(`✗ Error for "${contactQuery}": ${errMessage}`, "error");
       }
     }
 
