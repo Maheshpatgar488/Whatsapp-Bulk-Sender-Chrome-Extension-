@@ -577,102 +577,134 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
       if (mediaPayload && mediaPayload.base64) {
         const fileObj = createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
         if (fileObj) {
+          // A. FIRST CHECK: Is the Media / Document Preview screen ALREADY OPEN?
+          const modalSendBtn =
+            document.querySelector('div[data-animate-modal-popup="true"] span[data-icon="send"]')?.closest("button") ||
+            document.querySelector('div[data-animate-modal-popup="true"] span[data-icon="send"]')?.closest('div[role="button"]') ||
+            document.querySelector('div[role="dialog"] span[data-icon="send"]')?.closest("button") ||
+            document.querySelector('div[role="dialog"] span[data-icon="send"]')?.closest('div[role="button"]') ||
+            document.querySelector('div[data-testid="media-editor-container"] span[data-icon="send"]')?.closest("button") ||
+            document.querySelector('span[data-icon="send"]')?.closest("button") ||
+            document.querySelector('span[data-icon="send"]')?.closest('div[role="button"]') ||
+            document.querySelector('span[data-icon="send-light"]')?.closest("button") ||
+            document.querySelector('div[aria-label="Send"][role="button"]') ||
+            document.querySelector('button[aria-label="Send"]') ||
+            document.querySelector('div[data-testid="send"]');
+
+          if (modalSendBtn) {
+            clearInterval(timer);
+
+            // Add caption inside preview modal if present
+            if (captionText && captionText.trim().length > 0) {
+              const captionBox = document.querySelector('div[data-animate-modal-popup="true"] div[contenteditable="true"]') ||
+                                 document.querySelector('div[role="dialog"] div[contenteditable="true"]') ||
+                                 document.querySelector('div[contenteditable="true"]');
+              if (captionBox) {
+                captionBox.focus();
+                try {
+                  document.execCommand("insertText", false, captionText);
+                } catch (e) {
+                  captionBox.innerText = captionText;
+                }
+                captionBox.dispatchEvent(new Event("input", { bubbles: true }));
+              }
+            }
+
+            setTimeout(() => {
+              const btn = modalSendBtn.tagName === "BUTTON" ? modalSendBtn : modalSendBtn.closest("button") || modalSendBtn.closest('div[role="button"]') || modalSendBtn;
+              clickElement(btn);
+              setTimeout(() => resolve({ success: true, details: `Attached Media Sent: ${mediaPayload.name}` }), 2000);
+            }, 600);
+            return;
+          }
+
+          // B. PREVIEW NOT OPEN YET -> Execute Attachment Triggers
           const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
 
-          // WhatsApp accepts documents through its hidden file input. Use one
-          // deterministic path so paste/drop events cannot create text-only sends.
-          if (!fileInjected) {
-            const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-            if (fileInputs.length > 0) {
-              fileInputs.forEach((targetInput) => {
-                try {
-                  const dt = new DataTransfer();
-                  dt.items.add(fileObj);
-                  const propDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files");
-                  if (propDesc && propDesc.set) {
-                    propDesc.set.call(targetInput, dt.files);
-                  } else {
-                    targetInput.files = dt.files;
-                  }
-                  const evtOpts = { bubbles: true, cancelable: true, composed: true };
-                  targetInput.dispatchEvent(new Event("input", evtOpts));
-                  targetInput.dispatchEvent(new Event("change", evtOpts));
-                } catch (e) {}
-              });
-              fileInjected = true;
-            } else if (elapsed % 1200 < pollInterval) {
-              const openMenu = document.querySelector('div[data-testid="attach-menu-popover"]') ||
-                               document.querySelector('div[data-animate-dropdown-item="true"]') ||
-                               document.querySelector('ul[role="menu"]');
+          // Find specific target file input for document vs image/video
+          const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+          let targetInputs = [];
 
-              if (openMenu) {
-                const menuBtn = isDocument
-                  ? openMenu.querySelector('button[aria-label="Document"]') ||
-                    openMenu.querySelector('[aria-label="Document"]') ||
-                    document.querySelector('[aria-label="Document"]') ||
-                    openMenu.querySelector('span[data-icon="attach-document"]')?.closest('[role="button"], button, li') ||
-                    Array.from(openMenu.querySelectorAll("li, button, [role=button]")).find(el => /^document$/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()))
-                  : openMenu.querySelector('button[aria-label="Photos & videos"]') ||
-                    openMenu.querySelector('[aria-label="Photos & videos"]') ||
-                    document.querySelector('[aria-label="Photos & videos"]') ||
-                    openMenu.querySelector('span[data-icon="attach-image"]')?.closest('[role="button"], button, li') ||
-                    Array.from(openMenu.querySelectorAll("li, button, [role=button]")).find(el => /photo|image/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()));
-
-                if (menuBtn) clickElement(menuBtn);
-              } else if (attachClickCount < 5) {
-                const attachBtn = document.querySelector('footer [aria-label="Attach"]') ||
-                                   document.querySelector('footer [title="Attach"]') ||
-                                   document.querySelector('footer span[data-icon="clip"]')?.closest("button") ||
-                                   document.querySelector('footer span[data-icon="plus"]')?.closest("button");
-                if (attachBtn) {
-                  attachClickCount++;
-                  clickElement(attachBtn);
-                }
-              }
+          if (isDocument) {
+            targetInputs = fileInputs.filter((i) => {
+              const acc = (i.getAttribute("accept") || "").toLowerCase();
+              return acc === "*" || acc === "*/*" || acc === "" || acc.includes("pdf") || acc.includes("document");
+            });
+            if (targetInputs.length === 0 && fileInputs.length > 0) {
+              targetInputs = fileInputs;
+            }
+          } else {
+            targetInputs = fileInputs.filter((i) => {
+              const acc = (i.getAttribute("accept") || "").toLowerCase();
+              return acc.includes("image") || acc.includes("video");
+            });
+            if (targetInputs.length === 0 && fileInputs.length > 0) {
+              targetInputs = fileInputs;
             }
           }
 
-          // Check for Media / Document Preview Modal
-          const previewModal = document.querySelector('div[data-animate-modal-popup="true"]') ||
-                               document.querySelector('div[data-testid="media-editor-container"]') ||
-                               document.querySelector('div[data-testid="document-editor"]') ||
-                               document.querySelector('div[role="dialog"]') ||
-                               document.querySelector('div[data-testid="drawer-middle"]');
-
-          if (previewModal) {
-            const modalSendBtn = previewModal.querySelector('span[data-icon="send"]')?.closest("button") ||
-                                 previewModal.querySelector('span[data-icon="send"]')?.closest('div[role="button"]') ||
-                                 previewModal.querySelector('span[data-icon="send"]') ||
-                                 previewModal.querySelector('span[data-icon="send-light"]')?.closest("button") ||
-                                 previewModal.querySelector('div[aria-label="Send"][role="button"]') ||
-                                 previewModal.querySelector('button[aria-label="Send"]') ||
-                                 previewModal.querySelector('div[data-testid="send"]');
-
-            if (modalSendBtn) {
-              clearInterval(timer);
-
-              // Add caption inside preview modal if present
-              if (captionText && captionText.trim().length > 0) {
-                const captionBox = previewModal.querySelector('div[contenteditable="true"]');
-                if (captionBox) {
-                  captionBox.focus();
-                  document.execCommand("insertText", false, captionText);
-                  captionBox.dispatchEvent(new Event("input", { bubbles: true }));
-                }
+          // Inject File into target inputs
+          targetInputs.forEach((targetInput) => {
+            try {
+              const dt = new DataTransfer();
+              dt.items.add(fileObj);
+              const propDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files");
+              if (propDesc && propDesc.set) {
+                propDesc.set.call(targetInput, dt.files);
+              } else {
+                targetInput.files = dt.files;
               }
+              if (targetInput._valueTracker) {
+                try { targetInput._valueTracker.setValue(""); } catch (e) {}
+              }
+              const evtOpts = { bubbles: true, cancelable: true, composed: true };
+              targetInput.dispatchEvent(new Event("input", evtOpts));
+              targetInput.dispatchEvent(new Event("change", evtOpts));
+            } catch (e) {}
+          });
 
-              setTimeout(() => {
-                const btn = modalSendBtn.tagName === "BUTTON" ? modalSendBtn : modalSendBtn.closest("button") || modalSendBtn.closest('div[role="button"]') || modalSendBtn;
-                clickElement(btn);
-                setTimeout(() => resolve({ success: true, details: `Attached Media Sent: ${mediaPayload.name}` }), 2000);
-              }, 600);
-              return;
+          // Perform UI triggers every ~1.0s
+          if (elapsed % 1000 < pollInterval) {
+            // Drag and Drop trigger
+            dropFileOnWhatsApp(fileObj);
+
+            // Attach menu popover & Document option trigger
+            const openMenu = document.querySelector('div[data-testid="attach-menu-popover"]') ||
+                             document.querySelector('div[data-animate-dropdown-item="true"]') ||
+                             document.querySelector('ul[role="menu"]') ||
+                             document.querySelector('div[role="application"]');
+
+            if (openMenu) {
+              const menuBtn = isDocument
+                ? openMenu.querySelector('button[aria-label="Document"]') ||
+                  openMenu.querySelector('[aria-label="Document"]') ||
+                  document.querySelector('[aria-label="Document"]') ||
+                  openMenu.querySelector('span[data-icon="attach-document"]')?.closest('[role="button"], button, li') ||
+                  openMenu.querySelector('span[data-icon="document"]')?.closest('[role="button"], button, li') ||
+                  Array.from(openMenu.querySelectorAll("li, button, [role=button]")).find(el => /document/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()))
+                : openMenu.querySelector('button[aria-label="Photos & videos"]') ||
+                  openMenu.querySelector('[aria-label="Photos & videos"]') ||
+                  document.querySelector('[aria-label="Photos & videos"]') ||
+                  openMenu.querySelector('span[data-icon="attach-image"]')?.closest('[role="button"], button, li') ||
+                  openMenu.querySelector('span[data-icon="image"]')?.closest('[role="button"], button, li') ||
+                  Array.from(openMenu.querySelectorAll("li, button, [role=button]")).find(el => /photo|image/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()));
+
+              if (menuBtn) clickElement(menuBtn);
+            } else if (attachClickCount < 5) {
+              const attachBtn = document.querySelector('footer [aria-label="Attach"]') ||
+                                 document.querySelector('footer [title="Attach"]') ||
+                                 document.querySelector('footer span[data-icon="clip"]')?.closest("button") ||
+                                 document.querySelector('footer span[data-icon="plus"]')?.closest("button");
+              if (attachBtn) {
+                attachClickCount++;
+                clickElement(attachBtn);
+              }
             }
           }
         }
 
-        // Strict Timeout: Never fallback to text-only if user explicitly attached media!
-        if (elapsed >= 35000) {
+        // Strict Timeout
+        if (elapsed >= maxTimeout) {
           clearInterval(timer);
           return resolve({ success: false, error: `Could not attach PDF document (${mediaPayload.name}) to WhatsApp Web. Please ensure WhatsApp Web chat panel is open.` });
         }
