@@ -1026,11 +1026,15 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
                 captionBox.focus();
                 try {
                   document.execCommand("selectAll", false, null);
+                  document.execCommand("delete", false, null);
                   document.execCommand("insertText", false, captionText);
                 } catch (e) {
                   captionBox.innerText = captionText;
                 }
-                captionBox.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: captionText }));
+                if (!captionBox.textContent.includes(captionText.substring(0, 3))) {
+                  captionBox.innerText = captionText;
+                  captionBox.dispatchEvent(new Event("input", { bubbles: true }));
+                }
               }
             }
 
@@ -1111,11 +1115,15 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
             inputBox.focus();
             try {
               document.execCommand("selectAll", false, null);
+              document.execCommand("delete", false, null);
               document.execCommand("insertText", false, captionText);
             } catch (e) {
               inputBox.innerText = captionText;
             }
-            inputBox.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: captionText }));
+            if (!inputBox.textContent.includes(captionText.substring(0, 3))) {
+              inputBox.innerText = captionText;
+              inputBox.dispatchEvent(new Event("input", { bubbles: true }));
+            }
 
             setTimeout(() => {
               const sendButton =
