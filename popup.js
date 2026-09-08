@@ -1163,12 +1163,6 @@ startBtn.addEventListener("click", async () => {
     const allWa = await chrome.tabs.query({ url: "*://web.whatsapp.com/*" });
     if (allWa && allWa.length > 0) {
       activeTab = allWa[0];
-      try {
-        await chrome.tabs.update(activeTab.id, { active: true });
-        if (activeTab.windowId) {
-          await chrome.windows.update(activeTab.windowId, { focused: true });
-        }
-      } catch (e) {}
     }
   }
 
@@ -1192,14 +1186,8 @@ startBtn.addEventListener("click", async () => {
   let sent = 0;
   let failed = 0;
 
-  // Initial setup: For Live sending, ensure active tab is focused and ready
+  // Initial setup: For Live sending, verify WhatsApp Web interface is mounted
   if (!isSafeMode) {
-    try {
-      await chrome.tabs.update(activeTab.id, { active: true });
-      if (activeTab.windowId) {
-        await chrome.windows.update(activeTab.windowId, { focused: true });
-      }
-    } catch (e) {}
 
     // Check if WhatsApp Web interface is already mounted
     let isReady = false;
@@ -1764,3 +1752,21 @@ activateKeyBtn.addEventListener("click", async () => {
     alert("Invalid License Key. Please contact Mahesh Patgar for a valid key.");
   }
 });
+
+// Pop out extension into a standalone pinned window (so clicking on WhatsApp Web won't close it)
+const popoutBtn = document.getElementById("popoutBtn");
+if (popoutBtn) {
+  if (window.location.search.includes("window=true") || window.innerWidth > 500) {
+    popoutBtn.style.display = "none";
+  } else {
+    popoutBtn.addEventListener("click", () => {
+      chrome.windows.create({
+        url: chrome.runtime.getURL("popup.html?window=true"),
+        type: "popup",
+        width: 440,
+        height: 720
+      });
+      window.close();
+    });
+  }
+}
