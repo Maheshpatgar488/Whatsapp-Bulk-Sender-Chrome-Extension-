@@ -207,7 +207,45 @@ document.querySelectorAll(".chip-tag").forEach((chip) => {
   });
 });
 
-// Handle Media File Selection (Photo & Video Only)
+// Helper: Get MIME type based on file extension
+function getMimeTypeFromExt(filename, fallbackType) {
+  if (fallbackType && fallbackType.includes("/")) return fallbackType;
+  const ext = (filename.split('.').pop() || "").toLowerCase();
+  const map = {
+    "mp4": "video/mp4",
+    "mkv": "video/x-matroska",
+    "avi": "video/x-msvideo",
+    "mov": "video/quicktime",
+    "webm": "video/webm",
+    "wmv": "video/x-ms-wmv",
+    "3gp": "video/3gpp",
+    "flv": "video/x-flv",
+    "m4v": "video/x-m4v",
+    "ts": "video/mp2t",
+    "mpg": "video/mpeg",
+    "mpeg": "video/mpeg",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "gif": "image/gif",
+    "webp": "image/webp",
+    "svg": "image/svg+xml",
+    "bmp": "image/bmp",
+    "pdf": "application/pdf",
+    "doc": "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xls": "application/vnd.ms-excel",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "zip": "application/zip",
+    "rar": "application/x-rar-compressed",
+    "7z": "application/x-7z-compressed",
+    "txt": "text/plain",
+    "csv": "text/csv"
+  };
+  return map[ext] || "application/octet-stream";
+}
+
+// Handle Media/File Selection (All Video formats, Images, Documents, Files)
 mediaFile.addEventListener("change", (e) => {
   const file = e.target.files[0];
   if (!file) {
@@ -215,47 +253,51 @@ mediaFile.addEventListener("change", (e) => {
     return;
   }
 
-  // Validate Photo & Video types
-  const isImage = file.type.startsWith("image/");
-  const isVideo = file.type.startsWith("video/");
-
-  if (!isImage && !isVideo) {
-    alert("Please select a Photo (JPG, PNG) or Video (MP4) file.\n\nDocument and PDF attachments are temporarily disabled.");
+  // File size limit check (WhatsApp Web limit is 100MB)
+  if (file.size > 100 * 1024 * 1024) {
+    alert("File size exceeds 100MB. Please choose a file smaller than 100MB.");
     clearMedia();
     return;
   }
 
-  // File size limit check (WhatsApp Web limit is 16MB for video/audio)
-  if (file.size > 25 * 1024 * 1024) {
-    alert("Media file size exceeds 25MB. Please choose a smaller photo or video for fast sending.");
-    clearMedia();
-    return;
-  }
+  const isImage = (file.type && file.type.startsWith("image/")) || /\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(file.name);
+  const isVideo = (file.type && file.type.startsWith("video/")) || /\.(mp4|mkv|avi|mov|webm|wmv|3gp|flv|m4v|ts|mpg|mpeg)$/i.test(file.name);
+
+  const mimeType = getMimeTypeFromExt(file.name, file.type);
 
   const reader = new FileReader();
   reader.onload = (event) => {
     attachedMedia = {
       name: file.name,
-      type: file.type || (isImage ? "image/jpeg" : "video/mp4"),
+      type: mimeType,
       size: file.size,
-      base64: event.target.result
+      base64: event.target.result,
+      isImage: isImage,
+      isVideo: isVideo
     };
 
-    mediaBadge.textContent = isImage ? "✓ Photo Attached" : "✓ Video Attached";
-    mediaFileName.textContent = `${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
-    mediaPreviewContainer.style.display = "flex";
-
     if (isImage) {
+      mediaBadge.textContent = "✓ Photo Attached";
+      mediaIcon.textContent = "📸";
       mediaThumb.src = event.target.result;
       mediaThumb.style.display = "block";
       mediaIcon.style.display = "none";
-    } else {
+    } else if (isVideo) {
+      mediaBadge.textContent = "✓ Video Attached";
+      mediaIcon.textContent = "🎥";
       mediaThumb.style.display = "none";
       mediaIcon.style.display = "inline";
-      mediaIcon.textContent = "🎥";
+    } else {
+      mediaBadge.textContent = "✓ File Attached";
+      mediaIcon.textContent = "📄";
+      mediaThumb.style.display = "none";
+      mediaIcon.style.display = "inline";
     }
 
-    log(`Attached media: ${file.name}`, "success");
+    mediaFileName.textContent = `${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+    mediaPreviewContainer.style.display = "flex";
+
+    log(`Attached media/file: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`, "success");
   };
   reader.readAsDataURL(file);
 });
@@ -586,7 +628,20 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
         }
         base64Str = base64Str.replace(/[\r\n\s]/g, "");
 
-        const mime = type || "image/jpeg";
+        let mime = type;
+        if (!mime || !mime.includes("/")) {
+          const ext = (name.split('.').pop() || "").toLowerCase();
+          const extMap = {
+            "mp4": "video/mp4", "mkv": "video/x-matroska", "avi": "video/x-msvideo", "mov": "video/quicktime",
+            "webm": "video/webm", "wmv": "video/x-ms-wmv", "3gp": "video/3gpp", "flv": "video/x-flv",
+            "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp",
+            "pdf": "application/pdf", "doc": "application/msword", "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "xls": "application/vnd.ms-excel", "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "zip": "application/zip", "rar": "application/x-rar-compressed", "txt": "text/plain", "csv": "text/csv"
+          };
+          mime = extMap[ext] || "application/octet-stream";
+        }
+
         const binaryStr = atob(base64Str);
         const len = binaryStr.length;
         const bytes = new Uint8Array(len);
@@ -994,10 +1049,15 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
           // IF NOT IN PREVIEW YET: DETECT ATTACH MENU OR OPEN IT
           const now = Date.now();
 
-          // Check if "Photos & videos" option exists in the DOM
+          // Check if attach menu options exist in the DOM
           const photosVideosOption = Array.from(document.querySelectorAll('span, div, li, button')).find(el => {
             const text = (el.innerText || el.textContent || "").trim();
             return /^photos\s*(&|and)\s*videos$/i.test(text);
+          });
+
+          const documentOption = Array.from(document.querySelectorAll('span, div, li, button')).find(el => {
+            const text = (el.innerText || el.textContent || "").trim();
+            return /^document$/i.test(text);
           });
 
           // Check for file inputs in DOM
@@ -1007,15 +1067,31 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
             return acc.includes("image") || acc.includes("video");
           });
 
-          const isMenuOpen = !!(photosVideosOption || (fileInputs.length > 0 && lastAttachClick > 0));
+          const docInput = fileInputs.find(i => {
+            const acc = (i.getAttribute("accept") || "").toLowerCase();
+            return acc === "*" || acc === "*/*" || acc.includes("pdf") || (!acc.includes("image") && !acc.includes("video"));
+          });
+
+          const isMenuOpen = !!(photosVideosOption || documentOption || (fileInputs.length > 0 && lastAttachClick > 0));
 
           if (isMenuOpen) {
             // ATTACH MENU IS OPEN: DO NOT CLICK ATTACH BUTTON AGAIN (would close menu)!
-            // Inject file into Photos & Videos input
-            const targetInput = mediaInput ||
-                                photosVideosOption?.closest('li, div[role="button"], button')?.querySelector('input[type="file"]') ||
-                                fileInputs.find(i => (i.getAttribute("accept") || "").includes("image") || (i.getAttribute("accept") || "").includes("video")) ||
-                                fileInputs[0];
+            const isStandardWebMedia = /\.(jpe?g|png|gif|webp|mp4|webm|3gp)$/i.test(mediaPayload.name) ||
+              (mediaPayload.type && (mediaPayload.type.startsWith("image/") || mediaPayload.type === "video/mp4" || mediaPayload.type === "video/webm"));
+
+            let targetInput = null;
+            if (isStandardWebMedia) {
+              targetInput = mediaInput ||
+                            photosVideosOption?.closest('li, div[role="button"], button')?.querySelector('input[type="file"]') ||
+                            docInput ||
+                            fileInputs[0];
+            } else {
+              // Non-standard video (MKV, AVI, WMV, FLV, etc.) or Documents (PDF, DOCX, ZIP, etc.) -> Target Document input!
+              targetInput = docInput ||
+                            documentOption?.closest('li, div[role="button"], button')?.querySelector('input[type="file"]') ||
+                            fileInputs.find(i => i !== mediaInput) ||
+                            fileInputs[0];
+            }
 
             if (targetInput && (now - lastInjectionTime > 2000)) {
               lastInjectionTime = now;
