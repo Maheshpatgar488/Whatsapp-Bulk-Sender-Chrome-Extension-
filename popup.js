@@ -121,13 +121,14 @@ function sanitizePhoneNumber(rawPhone) {
   return clean;
 }
 
-// Check WhatsApp Web Tab Status on load & interval
+// Check WhatsApp Web Tab Status on load & interval (Checks if CURRENT ACTIVE TAB is WhatsApp Web)
 async function checkWhatsAppTab() {
   try {
-    const tabs = await chrome.tabs.query({ url: "*://web.whatsapp.com/*" });
-    const isWaTabFound = tabs && tabs.length > 0;
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const currentTab = tabs && tabs[0] ? tabs[0] : null;
+    const isCurrentTabWa = currentTab && currentTab.url && currentTab.url.toLowerCase().includes("web.whatsapp.com");
 
-    if (isWaTabFound) {
+    if (isCurrentTabWa) {
       if (tabStatus) {
         tabStatus.innerHTML = `<span class="pulse-dot" style="background: #27C93F;"></span><span style="color: #27C93F; font-weight: 700;">WhatsApp Connected</span>`;
         tabStatus.style.background = "rgba(39, 201, 63, 0.15)";
@@ -140,7 +141,10 @@ async function checkWhatsAppTab() {
         tabStatus.style.background = "rgba(255, 95, 86, 0.15)";
         tabStatus.style.border = "1px solid rgba(255, 95, 86, 0.3)";
       }
-      if (openTabBtn) openTabBtn.style.display = "block";
+      if (openTabBtn) {
+        openTabBtn.style.display = "block";
+        openTabBtn.innerHTML = "🌐 Switch to / Open WhatsApp Web";
+      }
     }
   } catch (e) {
     console.error("Tab check error:", e);
@@ -157,8 +161,20 @@ async function checkWhatsAppTab() {
 checkWhatsAppTab();
 setInterval(checkWhatsAppTab, 1000);
 
-openTabBtn.addEventListener("click", () => {
-  chrome.tabs.create({ url: "https://web.whatsapp.com" });
+openTabBtn.addEventListener("click", async () => {
+  try {
+    const waTabs = await chrome.tabs.query({ url: "*://web.whatsapp.com/*" });
+    if (waTabs && waTabs.length > 0) {
+      await chrome.tabs.update(waTabs[0].id, { active: true });
+      if (waTabs[0].windowId) {
+        await chrome.windows.update(waTabs[0].windowId, { focused: true });
+      }
+    } else {
+      chrome.tabs.create({ url: "https://web.whatsapp.com" });
+    }
+  } catch (err) {
+    chrome.tabs.create({ url: "https://web.whatsapp.com" });
+  }
 });
 
 // Click chip to insert into textarea cursor position
