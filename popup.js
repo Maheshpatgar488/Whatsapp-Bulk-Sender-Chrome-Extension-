@@ -124,31 +124,32 @@ function sanitizePhoneNumber(rawPhone) {
 // Check WhatsApp Web Tab Status on load & interval
 async function checkWhatsAppTab() {
   try {
-    const tabs = await chrome.tabs.query({});
-    const isWaTabFound = tabs.some((t) => (t.url && t.url.toLowerCase().includes("web.whatsapp.com")) || (t.title && t.title.toLowerCase().includes("whatsapp")));
+    const tabs = await chrome.tabs.query({ url: "*://web.whatsapp.com/*" });
+    const isWaTabFound = tabs && tabs.length > 0;
 
-    if (isWaTabFound || (window.location && window.location.href.includes("web.whatsapp.com"))) {
+    if (isWaTabFound) {
       if (tabStatus) {
         tabStatus.innerHTML = `<span class="pulse-dot" style="background: #27C93F;"></span><span style="color: #27C93F; font-weight: 700;">WhatsApp Connected</span>`;
         tabStatus.style.background = "rgba(39, 201, 63, 0.15)";
         tabStatus.style.border = "1px solid rgba(39, 201, 63, 0.3)";
       }
-      openTabBtn.style.display = "none";
+      if (openTabBtn) openTabBtn.style.display = "none";
     } else {
       if (tabStatus) {
-        tabStatus.innerHTML = `<span class="pulse-dot" style="background: #FF5F56;"></span><span style="color: #FF5F56; font-weight: 700;">WhatsApp Tab Missing</span>`;
+        tabStatus.innerHTML = `<span class="pulse-dot" style="background: #FF5F56;"></span><span style="color: #FF5F56; font-weight: 700;">WhatsApp Disconnected</span>`;
         tabStatus.style.background = "rgba(255, 95, 86, 0.15)";
         tabStatus.style.border = "1px solid rgba(255, 95, 86, 0.3)";
       }
-      openTabBtn.style.display = "block";
+      if (openTabBtn) openTabBtn.style.display = "block";
     }
   } catch (e) {
     console.error("Tab check error:", e);
     if (tabStatus) {
-      tabStatus.innerHTML = `<span class="pulse-dot" style="background: #27C93F;"></span><span style="color: #27C93F; font-weight: 700;">WhatsApp Connected</span>`;
-      tabStatus.style.background = "rgba(39, 201, 63, 0.15)";
-      tabStatus.style.border = "1px solid rgba(39, 201, 63, 0.3)";
+      tabStatus.innerHTML = `<span class="pulse-dot" style="background: #FF5F56;"></span><span style="color: #FF5F56; font-weight: 700;">WhatsApp Disconnected</span>`;
+      tabStatus.style.background = "rgba(255, 95, 86, 0.15)";
+      tabStatus.style.border = "1px solid rgba(255, 95, 86, 0.3)";
     }
+    if (openTabBtn) openTabBtn.style.display = "block";
   }
 }
 
