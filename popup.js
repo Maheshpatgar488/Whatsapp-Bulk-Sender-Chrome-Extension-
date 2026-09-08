@@ -795,25 +795,27 @@ startBtn.addEventListener("click", async () => {
     return;
   }
 
-  const contacts = getParsedContacts();
-  if (contacts.length === 0) {
+  if (!contacts || contacts.length === 0) {
     alert("No valid contacts loaded. Please upload contacts (.csv, .xlsx, .txt, .vcf).");
     return;
   }
 
   // Check quota for total contacts
-  if (contacts.length > quotaCheck.remainingText) {
-    alert(`Quota Warning: You are trying to send to ${contacts.length} contacts, but your remaining text quota is ${quotaCheck.remainingText}.\n\nPlease upgrade your plan to send more.`);
+  const textRem = quotaCheck.remainingText !== undefined ? quotaCheck.remainingText : (currentSubscription ? (currentSubscription.textQuota - currentSubscription.textUsed) : 999999);
+  const mediaRem = quotaCheck.remainingMedia !== undefined ? quotaCheck.remainingMedia : (currentSubscription ? (currentSubscription.mediaQuota - currentSubscription.mediaUsed) : 999999);
+
+  if (contacts.length > textRem) {
+    alert(`Quota Warning: You are trying to send to ${contacts.length} contacts, but your remaining text quota is ${textRem}.\n\nPlease upgrade your plan to send more.`);
     return;
   }
-  if (attachedMedia && contacts.length > quotaCheck.remainingMedia) {
-    alert(`Quota Warning: You are trying to attach media for ${contacts.length} contacts, but your remaining media quota is ${quotaCheck.remainingMedia}.\n\nPlease upgrade your plan to send more attachments.`);
+  if (attachedMedia && contacts.length > mediaRem) {
+    alert(`Quota Warning: You are trying to attach media for ${contacts.length} contacts, but your remaining media quota is ${mediaRem}.\n\nPlease upgrade your plan to send more attachments.`);
     return;
   }
 
   const minDelay = parseInt(minDelayInput.value) || 4;
   const maxDelay = parseInt(maxDelayInput.value) || 8;
-  const isSafeMode = safeModeToggle.checked;
+  const isSafeMode = testModeToggle ? testModeToggle.checked : false;
 
   let tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   let activeTab = tabs[0];
@@ -831,7 +833,12 @@ startBtn.addEventListener("click", async () => {
   }
 
   isSending = true;
-  updateUIState();
+  startBtn.style.display = "none";
+  stopBtn.style.display = "block";
+  fileInput.disabled = true;
+  if (mediaFile) mediaFile.disabled = true;
+  if (progressWrap) progressWrap.style.display = "block";
+  progressFill.style.width = "0%";
   runResults = [];
 
   const mediaDesc = attachedMedia ? ` + Media [${attachedMedia.name}]` : "";
@@ -944,7 +951,7 @@ startBtn.addEventListener("click", async () => {
 
     // Pacing delay between contacts
     if (i < contacts.length - 1 && isSending) {
-      const waitSec = Math.floor(Math.random() * (maxDelaySec - minDelaySec + 1)) + minDelaySec;
+      const waitSec = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
       log(`Pacing interval: waiting ${waitSec}s before next contact...`, "info");
       await new Promise((resolve) => setTimeout(resolve, waitSec * 1000));
     }
@@ -1092,37 +1099,44 @@ function updateQuotaUI() {
 }
 
 function checkCanSend(isMediaAttached) {
-  if (!currentSubscription) return { allowed: true };
+  if (!currentSubscription) return { allowed: true, remainingText: 999999, remainingMedia: 999999 };
 
   const now = new Date();
   const expiry = new Date(currentSubscription.expiryDate);
 
+  const textRem = Math.max(0, currentSubscription.textQuota - currentSubscription.textUsed);
+  const mediaRem = Math.max(0, currentSubscription.mediaQuota - currentSubscription.mediaUsed);
+
   if (now > expiry) {
     return {
       allowed: false,
-      reason: "Your subscription plan has expired. Please renew your plan to continue bulk sending."
+      reason: "Your subscription plan has expired. Please renew your plan to continue bulk sending.",
+      remainingText: 0,
+      remainingMedia: 0
     };
   }
 
-  const textRem = currentSubscription.textQuota - currentSubscription.textUsed;
   if (textRem <= 0) {
     return {
       allowed: false,
-      reason: "You have used 100% of your Text Message Quota. Upgrade your plan to unlock more messages."
+      reason: "You have used 100% of your Text Message Quota. Upgrade your plan to unlock more messages.",
+      remainingText: 0,
+      remainingMedia: mediaRem
     };
   }
 
   if (isMediaAttached) {
-    const mediaRem = currentSubscription.mediaQuota - currentSubscription.mediaUsed;
     if (mediaRem <= 0) {
       return {
         allowed: false,
-        reason: "You have used 100% of your Media/PDF Attachment Quota. Upgrade your plan to send media."
+        reason: "You have used 100% of your Media/PDF Attachment Quota. Upgrade your plan to send media.",
+        remainingText: textRem,
+        remainingMedia: 0
       };
     }
   }
 
-  return { allowed: true };
+  return { allowed: true, remainingText: textRem, remainingMedia: mediaRem };
 }
 
 // Modal Event Listeners & Background Payment Polling Engine
