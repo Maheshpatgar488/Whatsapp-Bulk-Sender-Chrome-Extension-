@@ -815,6 +815,21 @@ startBtn.addEventListener("click", async () => {
   const maxDelay = parseInt(maxDelayInput.value) || 8;
   const isSafeMode = safeModeToggle.checked;
 
+  let tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  let activeTab = tabs[0];
+
+  if (!activeTab || !activeTab.url || !activeTab.url.includes("web.whatsapp.com")) {
+    const allWa = await chrome.tabs.query({ url: "*://web.whatsapp.com/*" });
+    if (allWa && allWa.length > 0) {
+      activeTab = allWa[0];
+    }
+  }
+
+  if (!isSafeMode && (!activeTab || !activeTab.url || !activeTab.url.includes("web.whatsapp.com"))) {
+    alert("Please open https://web.whatsapp.com in Chrome before starting Live Sending.");
+    return;
+  }
+
   isSending = true;
   updateUIState();
   runResults = [];
