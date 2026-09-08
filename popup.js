@@ -519,11 +519,11 @@ function buildMessage(template, contact) {
 async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
   return new Promise((resolve) => {
     let elapsed = 0;
-    const pollInterval = 400;
+    const pollInterval = 350;
     const maxTimeout = 45000;
     let attachMenuOpened = false;
     let chatWaitElapsed = 0;
-    let fileInjected = false;
+    let lastInjectionTime = 0;
 
     // Helper: Synthetic Mouse & Pointer Event trigger for React / Web Components
     function clickElement(el) {
@@ -562,87 +562,26 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         for (let i = 0; i < len; i++) {
           bytes[i] = binaryStr.charCodeAt(i);
         }
-        return new File([bytes], name, { type: mime });
+        return new File([bytes], name, { type: mime, lastModified: Date.now() });
       } catch (err) {
         console.error("base64 to File conversion error:", err);
         return null;
       }
     }
 
-    // Helper: Paste file into WhatsApp Web text input box (triggers React onPaste fallback)
-    function pasteFileToWhatsAppInput(fileObj) {
-      try {
-        const dt = new DataTransfer();
-        dt.items.add(fileObj);
-        try { Object.defineProperty(dt, "types", { get: () => ["Files"], configurable: true }); } catch (e) {}
-
-        const inputBox = document.querySelector('footer div[contenteditable="true"]') ||
-                         document.querySelector('div[contenteditable="true"]');
-
-        if (inputBox) {
-          inputBox.focus();
-          const pasteEvt = new ClipboardEvent("paste", {
-            bubbles: true,
-            cancelable: true,
-            composed: true
-          });
-
-          Object.defineProperty(pasteEvt, "clipboardData", {
-            get: () => dt,
-            value: dt,
-            configurable: true
-          });
-
-          inputBox.dispatchEvent(pasteEvt);
-        }
-      } catch (err) {
-        console.error("Paste event dispatch error:", err);
-      }
-    }
-
-    // Helper: Drag-and-Drop file dispatch directly onto WhatsApp Web chat panel
-    function dropFileOnWhatsApp(fileObj) {
-      try {
-        const dropTargets = [
-          document.querySelector('#main'),
-          document.querySelector('footer'),
-          document.querySelector('div[data-testid="conversation-panel-body"]'),
-          document.querySelector('div#app'),
-          document.body
-        ].filter(Boolean);
-
-        for (const target of dropTargets) {
-          const dt = new DataTransfer();
-          dt.items.add(fileObj);
-          try { Object.defineProperty(dt, "types", { get: () => ["Files"], configurable: true }); } catch (e) {}
-
-          ["dragenter", "dragover", "drop"].forEach((type) => {
-            const evt = new DragEvent(type, { bubbles: true, cancelable: true, composed: true });
-            Object.defineProperty(evt, "dataTransfer", { get: () => dt, value: dt, configurable: true });
-            target.dispatchEvent(evt);
-          });
-        }
-      } catch (e) {
-        console.error("Drag-and-Drop error:", e);
-      }
-    }
-
-    // Helper: Inject file object into HTMLInputElement safely using Object.defineProperty
+    // Helper: Inject file object into HTMLInputElement safely for React 17/18/19
     function injectFileIntoInput(targetInput, fileObj) {
       try {
         const dt = new DataTransfer();
         dt.items.add(fileObj);
 
-        try {
-          Object.defineProperty(targetInput, "files", {
-            value: dt.files,
-            configurable: true,
-            writable: true
-          });
-        } catch (e) {
-          try { targetInput.files = dt.files; } catch (err) {}
-        }
+        // Reset value to ensure change event fires
+        try { targetInput.value = ""; } catch (e) {}
 
+        // Assign native files
+        targetInput.files = dt.files;
+
+        // Reset React's internal valueTracker if present
         if (targetInput._valueTracker) {
           try { targetInput._valueTracker.setValue(""); } catch (e) {}
         }
@@ -650,8 +589,10 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         const evtOpts = { bubbles: true, cancelable: true, composed: true };
         targetInput.dispatchEvent(new Event("input", evtOpts));
         targetInput.dispatchEvent(new Event("change", evtOpts));
+        return true;
       } catch (err) {
         console.error("injectFileIntoInput error:", err);
+        return false;
       }
     }
 
@@ -688,7 +629,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         }
       }
 
-      // 2. MEDIA ATTACHMENT FLOW (Strict PDF / Document Attachment mode)
+      // 2. MEDIA ATTACHMENT FLOW (Strict PDF / Document / Image mode)
       if (mediaPayload && mediaPayload.base64) {
         const fileObj = createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
         if (fileObj) {
@@ -704,9 +645,10 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
           let sendBtn = null;
           if (isPreviewActive) {
             sendBtn =
-              document.querySelector('div[data-testid="media-caption-input-container"]')?.closest('div[role="region"], div[data-animate-media-viewer="true"], div#app, body')?.querySelector('span[data-icon="send"], span[data-icon="wds-send-solid"], span[data-icon="send-filled"], div[aria-label="Send"], button[aria-label="Send"]')?.closest('button, [role="button"], div[role="button"]') ||
               document.querySelector('span[data-icon="wds-send-solid"]')?.closest('button, [role="button"], div[role="button"]') ||
               document.querySelector('span[data-icon="send-filled"]')?.closest('button, [role="button"], div[role="button"]') ||
+              document.querySelector('div[data-testid="media-caption-input-container"]')?.closest('div[role="region"], div[data-animate-media-viewer="true"], div#app, body')?.querySelector('span[data-icon="send"]')?.closest('button, [role="button"], div[role="button"]') ||
+              document.querySelector('div[data-animate-media-viewer="true"] span[data-icon="send"]')?.closest('button, [role="button"], div[role="button"]') ||
               Array.from(document.querySelectorAll('div[role="button"], button')).find(el => {
                 if (el.closest('footer')) return false; // Exclude main chat footer button!
                 const label = (el.getAttribute("aria-label") || el.getAttribute("title") || "").toLowerCase();
@@ -722,6 +664,8 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
             if (captionText && captionText.trim().length > 0) {
               const captionBox = document.querySelector('div[data-testid="media-caption-input-container"] div[contenteditable="true"]') ||
                                  document.querySelector('div[aria-label="Add a caption"]') ||
+                                 document.querySelector('div[data-animate-media-viewer="true"] div[contenteditable="true"]') ||
+                                 document.querySelector('div[role="region"] div[contenteditable="true"]') ||
                                  document.querySelector('div[contenteditable="true"]');
               if (captionBox) {
                 captionBox.focus();
@@ -731,81 +675,60 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
                 } catch (e) {
                   captionBox.innerText = captionText;
                 }
-                captionBox.dispatchEvent(new Event("input", { bubbles: true }));
+                captionBox.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: captionText }));
               }
             }
 
             setTimeout(() => {
               const btn = sendBtn.tagName === "BUTTON" ? sendBtn : sendBtn.closest('button, [role="button"], div[role="button"]') || sendBtn;
               clickElement(btn);
-              setTimeout(() => resolve({ success: true, details: `Attached Media Sent: ${mediaPayload.name}` }), 2000);
+              setTimeout(() => resolve({ success: true, details: `Attached Media & Greeting Sent: ${mediaPayload.name}` }), 2000);
             }, 600);
             return;
           }
 
-          // B. INJECT FILE INTO WHATSAPP WEB
-          if (!fileInjected) {
-            const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
+          // B. INJECT FILE INTO WHATSAPP WEB (Controlled Single Injection with 4s Debounce)
+          const now = Date.now();
+          const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
 
-            // Check if Attach Menu Popover is open
-            const openMenu = document.querySelector('div[data-testid="attach-menu-popover"]') ||
-                             document.querySelector('div[data-animate-dropdown-item="true"]') ||
-                             document.querySelector('ul[role="menu"]') ||
-                             document.querySelector('div[role="application"]');
+          const openMenu = document.querySelector('div[data-testid="attach-menu-popover"]') ||
+                           document.querySelector('div[data-animate-dropdown-item="true"]') ||
+                           document.querySelector('ul[role="menu"]') ||
+                           document.querySelector('div[role="application"]');
 
-            if (!openMenu) {
-              // 1. Popover NOT open yet -> Click Attach (+) button to open popover
-              if (!attachMenuOpened) {
-                const attachBtn = document.querySelector('footer [aria-label="Attach"]') ||
-                                   document.querySelector('footer [title="Attach"]') ||
-                                   document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
-                                   document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
-                                   document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
-                                   document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]') ||
-                                   Array.from(document.querySelectorAll('footer [role="button"], footer button')).find(el => /attach/i.test(el.getAttribute("aria-label") || el.getAttribute("title") || ""));
+          // If popover menu is not open yet, click attach button
+          if (!openMenu && !attachMenuOpened) {
+            const attachBtn = document.querySelector('footer [aria-label="Attach"]') ||
+                               document.querySelector('footer [title="Attach"]') ||
+                               document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
+                               document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
+                               document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
+                               document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]') ||
+                               Array.from(document.querySelectorAll('footer [role="button"], footer button')).find(el => /attach/i.test(el.getAttribute("aria-label") || el.getAttribute("title") || ""));
 
-                if (attachBtn) {
-                  attachMenuOpened = true;
-                  clickElement(attachBtn);
-                }
-              }
-              // Always trigger paste & drag-drop as fallback while waiting for popover
-              pasteFileToWhatsAppInput(fileObj);
-              dropFileOnWhatsApp(fileObj);
-            } else {
-              // 2. Popover IS OPEN -> Search for target file input inside popover
-              const popoverInputs = Array.from(openMenu.querySelectorAll('input[type="file"]'));
-              
-              let targetInput = popoverInputs.find(i => isDocument 
-                ? (i.accept === "*" || i.accept.includes("*/*") || !i.accept.includes("image"))
-                : (i.accept.includes("image") || i.accept === "*")
-              ) || popoverInputs[0];
-
-              // Fallback to any page input if popover inputs array was empty
-              if (!targetInput) {
-                const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-                targetInput = allInputs.find(i => isDocument 
-                  ? (i.accept === "*" || i.accept.includes("*/*") || !i.accept.includes("image"))
-                  : (i.accept.includes("image") || i.accept === "*")
-                ) || allInputs[0];
-              }
-
-              if (targetInput) {
-                fileInjected = true;
-                injectFileIntoInput(targetInput, fileObj);
-                pasteFileToWhatsAppInput(fileObj);
-                dropFileOnWhatsApp(fileObj);
-              } else {
-                // If popover open but input not rendered yet, trigger paste & drop
-                pasteFileToWhatsAppInput(fileObj);
-                dropFileOnWhatsApp(fileObj);
-              }
+            if (attachBtn) {
+              attachMenuOpened = true;
+              clickElement(attachBtn);
             }
-          } else {
-            // If 4 seconds passed without Send button appearing, reset fileInjected to retry
-            if (elapsed % 4000 === 0) {
-              fileInjected = false;
-              attachMenuOpened = false;
+          }
+
+          // Only attempt injection once every 4 seconds to prevent repeated attach loops
+          if (now - lastInjectionTime > 4000) {
+            const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+            const popoverInputs = openMenu ? Array.from(openMenu.querySelectorAll('input[type="file"]')) : [];
+            const candidateInputs = popoverInputs.length > 0 ? popoverInputs : allInputs;
+            
+            let targetInput = candidateInputs.find(i => isDocument 
+              ? (i.accept === "*" || i.accept.includes("*/*") || (!i.accept.includes("image") && !i.accept.includes("video")))
+              : (i.accept.includes("image") || i.accept === "*")
+            ) || allInputs.find(i => isDocument 
+              ? (i.accept === "*" || i.accept.includes("*/*") || (!i.accept.includes("image") && !i.accept.includes("video")))
+              : (i.accept.includes("image") || i.accept === "*")
+            ) || candidateInputs[0];
+
+            if (targetInput) {
+              lastInjectionTime = now;
+              injectFileIntoInput(targetInput, fileObj);
             }
           }
         }
@@ -986,12 +909,23 @@ startBtn.addEventListener("click", async () => {
         const initialWait = attachedMedia ? 4500 : 2500;
         await new Promise((r) => setTimeout(r, initialWait));
 
-        // 3. Inject send automation
-        const executionResults = await chrome.scripting.executeScript({
-          target: { tabId: activeTab.id },
-          func: triggerWhatsAppSendInPage,
-          args: [attachedMedia, personalizedMessage]
-        });
+        // 3. Inject send automation in MAIN world context (direct access to WhatsApp Web React DOM)
+        let executionResults = null;
+        try {
+          executionResults = await chrome.scripting.executeScript({
+            target: { tabId: activeTab.id },
+            func: triggerWhatsAppSendInPage,
+            args: [attachedMedia, personalizedMessage],
+            world: "MAIN"
+          });
+        } catch (scriptErr) {
+          console.warn("world: 'MAIN' execution fallback to ISOLATED:", scriptErr);
+          executionResults = await chrome.scripting.executeScript({
+            target: { tabId: activeTab.id },
+            func: triggerWhatsAppSendInPage,
+            args: [attachedMedia, personalizedMessage]
+          });
+        }
 
         // Check execution output
         const resultObj = executionResults && executionResults[0] ? executionResults[0].result : null;
