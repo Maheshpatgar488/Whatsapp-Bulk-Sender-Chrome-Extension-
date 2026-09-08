@@ -127,24 +127,16 @@ async function checkWhatsAppTab() {
     const waTabs = await chrome.tabs.query({ url: "*://web.whatsapp.com/*" });
     const isWaOpen = waTabs && waTabs.length > 0;
 
-    const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    const currentTab = activeTabs && activeTabs[0] ? activeTabs[0] : null;
-    const isCurrentTabWa = currentTab && currentTab.url && currentTab.url.toLowerCase().includes("web.whatsapp.com");
+    const [currentTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const isCurrentTabWa = !!(currentTab && currentTab.url && currentTab.url.includes("web.whatsapp.com"));
 
-    if (isWaOpen) {
+    if (isCurrentTabWa) {
       if (tabStatus) {
         tabStatus.innerHTML = `<span class="pulse-dot" style="background: #27C93F;"></span><span style="color: #27C93F; font-weight: 700; white-space: nowrap;">Connected</span>`;
         tabStatus.style.background = "rgba(39, 201, 63, 0.15)";
         tabStatus.style.border = "1px solid rgba(39, 201, 63, 0.3)";
       }
-      if (openTabBtn) {
-        if (isCurrentTabWa) {
-          openTabBtn.style.display = "none";
-        } else {
-          openTabBtn.style.display = "block";
-          openTabBtn.innerHTML = "🌐 Switch to WhatsApp Web Tab";
-        }
-      }
+      if (openTabBtn) openTabBtn.style.display = "none";
     } else {
       if (tabStatus) {
         tabStatus.innerHTML = `<span class="pulse-dot" style="background: #FF5F56;"></span><span style="color: #FF5F56; font-weight: 700; white-space: nowrap;">Disconnected</span>`;
@@ -153,7 +145,7 @@ async function checkWhatsAppTab() {
       }
       if (openTabBtn) {
         openTabBtn.style.display = "block";
-        openTabBtn.innerHTML = "🌐 Open WhatsApp Web";
+        openTabBtn.innerHTML = isWaOpen ? "🌐 Switch to WhatsApp Web Tab" : "🌐 Open WhatsApp Web";
       }
     }
   } catch (e) {
