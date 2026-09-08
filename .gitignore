@@ -3,5 +3,6 @@ node_modules/
 .DS_Store
 Thumbs.db
 *.log
-graphify-out/
-
+# Graphify output: Ignore build state and logs, but keep main graph file for team context
+graphify-out/*
+!graphify-out/graph.json
