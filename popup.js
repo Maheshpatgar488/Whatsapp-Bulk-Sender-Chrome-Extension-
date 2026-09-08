@@ -513,6 +513,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
     const maxTimeout = 30000;
     let hasInjectedMedia = false;
     let isInjectingMedia = false;
+    let mediaAttemptTime = 0;
 
     // Helper: Convert base64 DataURL back to a DOM File object inside page context
     async function createDOMFile(base64Data, name, type) {
@@ -537,10 +538,9 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
       if (modal) {
         const text = (modal.innerText || "").toLowerCase();
         if (
-          text.includes("invalid") ||
-          text.includes("phone number shared via url is invalid") ||
-          text.includes("url is invalid") ||
-          text.includes("couldn't find")
+          (text.includes("invalid") || text.includes("couldn't find") || text.includes("phone number shared via url is invalid")) &&
+          !modal.querySelector('span[data-icon="send"]') &&
+          !modal.querySelector('div[aria-label="Send"]')
         ) {
           clearInterval(timer);
           const okBtn = modal.querySelector("button");
@@ -550,120 +550,127 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
       }
 
       // 2. Handle Media / PDF Attachment Injection if mediaPayload is present
-      if (mediaPayload && mediaPayload.base64 && !hasInjectedMedia && !isInjectingMedia) {
-        isInjectingMedia = true;
+      if (mediaPayload && mediaPayload.base64) {
+        if (!hasInjectedMedia && !isInjectingMedia) {
+          isInjectingMedia = true;
+          if (mediaAttemptTime === 0) mediaAttemptTime = Date.now();
 
-        // 2a. Click Attach button (plus / clip icon) to reveal inputs
-        const attachBtn = document.querySelector('span[data-icon="plus"]')?.closest("button") ||
-                           document.querySelector('span[data-icon="clip"]')?.closest("button") ||
-                           document.querySelector('span[data-icon="attach-menu-plus"]')?.closest("button") ||
-                           document.querySelector('div[aria-label="Attach"]') ||
-                           document.querySelector('button[aria-label="Attach"]') ||
-                           document.querySelector('button[title="Attach"]') ||
-                           document.querySelector('span[data-icon="plus"]') ||
-                           document.querySelector('span[data-icon="clip"]');
+          // 2a. Query for existing file inputs
+          let fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
 
-        if (attachBtn) {
-          attachBtn.click();
-        }
+          // 2b. If no file inputs found, click Attach button to open attach menu
+          if (fileInputs.length === 0) {
+            const attachBtn = document.querySelector('div[title="Attach"]') ||
+                               document.querySelector('div[aria-label="Attach"]') ||
+                               document.querySelector('button[aria-label="Attach"]') ||
+                               document.querySelector('button[title="Attach"]') ||
+                               document.querySelector('span[data-icon="clip"]')?.closest('div[role="button"]') ||
+                               document.querySelector('span[data-icon="clip"]')?.closest('button') ||
+                               document.querySelector('span[data-icon="attach-menu-plus"]')?.closest('div[role="button"]') ||
+                               document.querySelector('span[data-icon="attach-menu-plus"]')?.closest('button') ||
+                               document.querySelector('span[data-icon="plus"]')?.closest('div[role="button"]') ||
+                               document.querySelector('span[data-icon="plus"]')?.closest('button') ||
+                               document.querySelector('footer span[data-icon="clip"]') ||
+                               document.querySelector('footer span[data-icon="plus"]');
 
-        // Allow attach menu to render inputs
-        await new Promise((r) => setTimeout(r, 400));
-
-        // 2b. Query file inputs
-        const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-        if (fileInputs.length > 0) {
-          const fileObj = await createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
-          if (fileObj) {
-            const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
-
-            // Choose target input: for documents (PDF), pick input with accept="*" or multiple or the last input
-            let targetInput = null;
-            if (isDocument) {
-              targetInput = fileInputs.find((i) => i.accept === "*" || i.accept.includes("document") || i.accept.includes("pdf")) ||
-                            fileInputs[fileInputs.length - 1];
-            } else {
-              targetInput = fileInputs.find((i) => i.accept.includes("image") || i.accept.includes("video")) ||
-                            fileInputs[0];
+            if (attachBtn) {
+              attachBtn.click();
+              await new Promise((r) => setTimeout(r, 450));
+              fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
             }
-
-            if (targetInput) {
-              const dt = new DataTransfer();
-              dt.items.add(fileObj);
-              targetInput.files = dt.files;
-              targetInput.dispatchEvent(new Event("change", { bubbles: true }));
-              targetInput.dispatchEvent(new Event("input", { bubbles: true }));
-              hasInjectedMedia = true;
-              isInjectingMedia = false;
-            } else {
-              isInjectingMedia = false;
-            }
-          } else {
-            isInjectingMedia = false;
           }
-        } else {
+
+          // 2c. Inject File into input
+          if (fileInputs.length > 0) {
+            const fileObj = await createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
+            if (fileObj) {
+              const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
+
+              let targetInput = null;
+              if (isDocument) {
+                targetInput = fileInputs.find((i) => i.accept === "*" || i.accept.includes("document") || i.accept.includes("pdf")) ||
+                              fileInputs[fileInputs.length - 1];
+              } else {
+                targetInput = fileInputs.find((i) => i.accept.includes("image") || i.accept.includes("video")) ||
+                              fileInputs[0];
+              }
+
+              if (targetInput) {
+                const dt = new DataTransfer();
+                dt.items.add(fileObj);
+                targetInput.files = dt.files;
+                targetInput.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+                targetInput.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+                hasInjectedMedia = true;
+              }
+            }
+          }
           isInjectingMedia = false;
         }
-      }
 
-      // 3. Check for Media / Document Preview Modal (when media is attached)
-      const previewModal = document.querySelector('div[data-animate-modal-popup="true"]') ||
-                           document.querySelector('div[data-testid="media-editor-container"]') ||
-                           document.querySelector('div[data-testid="document-editor"]') ||
-                           document.querySelector('div[role="dialog"]');
+        // 2d. Check for Media / Document Preview Modal
+        const previewModal = document.querySelector('div[data-animate-modal-popup="true"]') ||
+                             document.querySelector('div[data-testid="media-editor-container"]') ||
+                             document.querySelector('div[data-testid="document-editor"]') ||
+                             document.querySelector('div[role="dialog"]');
 
-      if (previewModal) {
-        const modalSendBtn = previewModal.querySelector('span[data-icon="send"]')?.closest("button") ||
-                             previewModal.querySelector('span[data-icon="send"]')?.closest('div[role="button"]') ||
-                             previewModal.querySelector('span[data-icon="send"]') ||
-                             previewModal.querySelector('span[data-icon="send-light"]')?.closest("button") ||
-                             previewModal.querySelector('div[aria-label="Send"][role="button"]') ||
-                             previewModal.querySelector('button[aria-label="Send"]');
+        if (previewModal) {
+          const modalSendBtn = previewModal.querySelector('span[data-icon="send"]')?.closest("button") ||
+                               previewModal.querySelector('span[data-icon="send"]')?.closest('div[role="button"]') ||
+                               previewModal.querySelector('span[data-icon="send"]') ||
+                               previewModal.querySelector('span[data-icon="send-light"]')?.closest("button") ||
+                               previewModal.querySelector('div[aria-label="Send"][role="button"]') ||
+                               previewModal.querySelector('button[aria-label="Send"]');
 
-        if (modalSendBtn) {
-          clearInterval(timer);
+          if (modalSendBtn) {
+            clearInterval(timer);
 
-          // Add caption if provided
-          if (captionText && captionText.trim().length > 0) {
-            const captionBox = previewModal.querySelector('div[contenteditable="true"]');
-            if (captionBox) {
-              captionBox.focus();
-              document.execCommand("insertText", false, captionText);
+            // Add caption inside preview modal if present
+            if (captionText && captionText.trim().length > 0) {
+              const captionBox = previewModal.querySelector('div[contenteditable="true"]');
+              if (captionBox) {
+                captionBox.focus();
+                document.execCommand("insertText", false, captionText);
+              }
             }
+
+            setTimeout(() => {
+              const btn = modalSendBtn.tagName === "BUTTON" ? modalSendBtn : modalSendBtn.closest("button") || modalSendBtn.closest('div[role="button"]') || modalSendBtn;
+              btn.click();
+              setTimeout(() => resolve({ success: true, details: "Media / PDF Document Dispatched" }), 2000);
+            }, 600);
+            return;
           }
-
-          setTimeout(() => {
-            const btn = modalSendBtn.tagName === "BUTTON" ? modalSendBtn : modalSendBtn.closest("button") || modalSendBtn.closest('div[role="button"]') || modalSendBtn;
-            btn.click();
-
-            setTimeout(() => resolve({ success: true, details: "Media / PDF Document Dispatched" }), 2000);
-          }, 600);
-          return;
         }
       }
 
-      // 4. If NO media payload attached, send text via standard WhatsApp Send Button
-      if (!mediaPayload || !mediaPayload.base64) {
+      // 3. FALLBACK FOR TEXT SENDING (If no media attached OR if media preview modal did not open after 4.5 seconds)
+      const shouldSendTextOnly = (!mediaPayload || !mediaPayload.base64) || (mediaAttemptTime > 0 && Date.now() - mediaAttemptTime > 4500 && !hasInjectedMedia);
+
+      if (shouldSendTextOnly) {
         const sendButton =
-          document.querySelector('button span[data-icon="send"]') ||
+          document.querySelector('footer button span[data-icon="send"]')?.closest("button") ||
+          document.querySelector('footer span[data-icon="send"]')?.closest("button") ||
+          document.querySelector('footer span[data-icon="send"]')?.closest('div[role="button"]') ||
+          document.querySelector('footer button[aria-label="Send"]') ||
+          document.querySelector('footer div[aria-label="Send"]') ||
+          document.querySelector('button span[data-icon="send"]')?.closest("button") ||
           document.querySelector('span[data-icon="send"]')?.closest("button") ||
           document.querySelector('button[aria-label="Send"]') ||
-          document.querySelector('footer button span[data-icon="send"]')?.parentElement ||
-          document.querySelector('span[data-icon="send-light"]')?.closest("button") ||
-          document.querySelector('button[data-testid="send"]') ||
-          document.querySelector('button[data-tab="11"]');
+          document.querySelector('button[data-testid="send"]');
 
         if (sendButton) {
           clearInterval(timer);
           setTimeout(() => {
             const btn = sendButton.tagName === "BUTTON" ? sendButton : sendButton.closest("button") || sendButton;
             btn.click();
-            setTimeout(() => resolve({ success: true, details: "Message Delivered via Send Button" }), 1500);
+            const detailMsg = mediaPayload ? "Delivered (Text Only - Attachment Fallback)" : "Message Delivered via Send Button";
+            setTimeout(() => resolve({ success: true, details: detailMsg }), 1500);
           }, 500);
           return;
         }
 
-        // Fallback: Press Enter on footer message input if text is present
+        // Fallback: Enter key on footer input
         const inputBox = document.querySelector('footer div[contenteditable="true"]');
         if (inputBox && inputBox.innerText.trim().length > 0 && elapsed > 3500) {
           clearInterval(timer);
