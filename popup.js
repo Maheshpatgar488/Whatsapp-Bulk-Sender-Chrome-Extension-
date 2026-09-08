@@ -682,21 +682,27 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
       if (mediaPayload && mediaPayload.base64) {
         const fileObj = createDOMFile(mediaPayload.base64, mediaPayload.name, mediaPayload.type);
         if (fileObj) {
-          // A. CHECK IF SEND BUTTON IS VISIBLE (Document / Media Editor View Active)
-          const sendBtn =
-            document.querySelector('span[data-icon="send"]')?.closest('button, [role="button"], div[role="button"]') ||
-            document.querySelector('span[data-icon="send-light"]')?.closest('button, [role="button"], div[role="button"]') ||
-            document.querySelector('span[data-icon="send-filled"]')?.closest('button, [role="button"], div[role="button"]') ||
-            document.querySelector('span[data-icon="wds-send-solid"]')?.closest('button, [role="button"], div[role="button"]') ||
-            document.querySelector('span[data-icon="express-send"]')?.closest('button, [role="button"], div[role="button"]') ||
-            document.querySelector('div[aria-label="Send"][role="button"]') ||
-            document.querySelector('button[aria-label="Send"]') ||
-            document.querySelector('div[data-testid="send"]') ||
-            document.querySelector('button[data-testid="compose-btn-send"]') ||
-            Array.from(document.querySelectorAll('div[role="button"], button')).find(el => {
-              const label = (el.getAttribute("aria-label") || el.getAttribute("title") || "").toLowerCase();
-              return (label === "send" || label.includes("send")) && el.offsetWidth > 0;
-            });
+          // A. CHECK IF MEDIA PREVIEW VIEW IS ACTIVE & GET MEDIA SEND BUTTON
+          const isPreviewActive = !!(
+            document.querySelector('div[data-testid="media-caption-input-container"]') ||
+            document.querySelector('div[aria-label="Add a caption"]') ||
+            document.querySelector('div[data-animate-media-viewer="true"]') ||
+            document.querySelector('span[data-icon="wds-send-solid"]') ||
+            document.querySelector('span[data-icon="send-filled"]')
+          );
+
+          let sendBtn = null;
+          if (isPreviewActive) {
+            sendBtn =
+              document.querySelector('div[data-testid="media-caption-input-container"]')?.closest('div[role="region"], div[data-animate-media-viewer="true"], div#app, body')?.querySelector('span[data-icon="send"], span[data-icon="wds-send-solid"], span[data-icon="send-filled"], div[aria-label="Send"], button[aria-label="Send"]')?.closest('button, [role="button"], div[role="button"]') ||
+              document.querySelector('span[data-icon="wds-send-solid"]')?.closest('button, [role="button"], div[role="button"]') ||
+              document.querySelector('span[data-icon="send-filled"]')?.closest('button, [role="button"], div[role="button"]') ||
+              Array.from(document.querySelectorAll('div[role="button"], button')).find(el => {
+                if (el.closest('footer')) return false; // Exclude main chat footer button!
+                const label = (el.getAttribute("aria-label") || el.getAttribute("title") || "").toLowerCase();
+                return (label === "send" || label.includes("send")) && el.offsetWidth > 0;
+              });
+          }
 
           // IF SEND BUTTON IS VISIBLE (Document Editor Preview Active):
           if (sendBtn) {
@@ -710,6 +716,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
               if (captionBox) {
                 captionBox.focus();
                 try {
+                  document.execCommand("selectAll", false, null);
                   document.execCommand("insertText", false, captionText);
                 } catch (e) {
                   captionBox.innerText = captionText;
