@@ -590,6 +590,61 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
       }
     }
 
+    // Helper: Drag-and-Drop file dispatch directly onto WhatsApp Web chat panel
+    function dropFileOnWhatsApp(fileObj) {
+      try {
+        const dropTargets = [
+          document.querySelector('#main'),
+          document.querySelector('footer'),
+          document.querySelector('div[data-testid="conversation-panel-body"]'),
+          document.querySelector('div#app'),
+          document.body
+        ].filter(Boolean);
+
+        for (const target of dropTargets) {
+          const dt = new DataTransfer();
+          dt.items.add(fileObj);
+          try { Object.defineProperty(dt, "types", { get: () => ["Files"], configurable: true }); } catch (e) {}
+
+          ["dragenter", "dragover", "drop"].forEach((type) => {
+            const evt = new DragEvent(type, { bubbles: true, cancelable: true, composed: true });
+            Object.defineProperty(evt, "dataTransfer", { get: () => dt, value: dt, configurable: true });
+            target.dispatchEvent(evt);
+          });
+        }
+      } catch (e) {
+        console.error("Drag-and-Drop error:", e);
+      }
+    }
+
+    // Helper: Inject file object into HTMLInputElement safely using Object.defineProperty
+    function injectFileIntoInput(targetInput, fileObj) {
+      try {
+        const dt = new DataTransfer();
+        dt.items.add(fileObj);
+
+        try {
+          Object.defineProperty(targetInput, "files", {
+            value: dt.files,
+            configurable: true,
+            writable: true
+          });
+        } catch (e) {
+          try { targetInput.files = dt.files; } catch (err) {}
+        }
+
+        if (targetInput._valueTracker) {
+          try { targetInput._valueTracker.setValue(""); } catch (e) {}
+        }
+
+        const evtOpts = { bubbles: true, cancelable: true, composed: true };
+        targetInput.dispatchEvent(new Event("input", evtOpts));
+        targetInput.dispatchEvent(new Event("change", evtOpts));
+      } catch (err) {
+        console.error("injectFileIntoInput error:", err);
+      }
+    }
+
     const timer = setInterval(async () => {
       // Wait for WhatsApp Web chat panel UI to finish loading
       const isChatReady = !!(document.querySelector('#main') || document.querySelector('footer') || document.querySelector('div[contenteditable="true"]'));
@@ -677,26 +732,9 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
             if (targetInput) {
               // Target file input is ready in DOM! Inject file and mark fileInjected = true
               fileInjected = true;
-              try {
-                const dt = new DataTransfer();
-                dt.items.add(fileObj);
-                const propDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files");
-                if (propDesc && propDesc.set) {
-                  propDesc.set.call(targetInput, dt.files);
-                } else {
-                  targetInput.files = dt.files;
-                }
-                if (targetInput._valueTracker) {
-                  try { targetInput._valueTracker.setValue(""); } catch (e) {}
-                }
-                const evtOpts = { bubbles: true, cancelable: true, composed: true };
-                targetInput.dispatchEvent(new Event("input", evtOpts));
-                targetInput.dispatchEvent(new Event("change", evtOpts));
-              } catch (e) {
-                console.error("Single file input injection error:", e);
-              }
-              // Also trigger paste as fallback
+              injectFileIntoInput(targetInput, fileObj);
               pasteFileToWhatsAppInput(fileObj);
+              dropFileOnWhatsApp(fileObj);
             } else {
               // File input not ready in DOM yet - Open Attach Menu first!
               const openMenu = document.querySelector('div[data-testid="attach-menu-popover"]') ||
@@ -737,9 +775,9 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
                 }
               }
 
-              if (elapsed >= 1600 && !fileInjected) {
-                pasteFileToWhatsAppInput(fileObj);
-              }
+              // Always trigger paste & drag-drop as fallback
+              pasteFileToWhatsAppInput(fileObj);
+              dropFileOnWhatsApp(fileObj);
             }
           }
         }
