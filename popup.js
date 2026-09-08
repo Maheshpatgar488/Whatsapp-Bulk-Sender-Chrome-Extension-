@@ -629,25 +629,36 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
 
     // Helper: Clear WhatsApp Web left-hand search box
     function clearSearchInput() {
-      const clearBtn = document.querySelector('button[aria-label="Cancel search"]') ||
-                       document.querySelector('span[data-icon="x-alt"]')?.closest('button') ||
-                       document.querySelector('span[data-icon="x"]')?.closest('button') ||
-                       document.querySelector('button[aria-label="Clear search"]');
-      if (clearBtn) {
-        clickElement(clearBtn);
+      // 1. Click cancel / clear search buttons
+      const clearButtons = [
+        document.querySelector('button[aria-label="Cancel search"]'),
+        document.querySelector('button[aria-label="Clear search"]'),
+        document.querySelector('button[aria-label="Back"]'),
+        document.querySelector('span[data-icon="x-alt"]')?.closest('button, [role="button"]'),
+        document.querySelector('span[data-icon="x"]')?.closest('button, [role="button"]'),
+        document.querySelector('span[data-icon="back"]')?.closest('button, [role="button"]'),
+        document.querySelector('span[data-icon="arrow-back"]')?.closest('button, [role="button"]')
+      ];
+
+      for (const btn of clearButtons) {
+        if (btn) {
+          clickElement(btn);
+        }
       }
-      const searchBox = document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
-                        document.querySelector('div[data-testid="chat-list-search"]') ||
-                        document.querySelector('div[role="textbox"][aria-label*="Search"]') ||
-                        document.querySelector('#side div[contenteditable="true"]');
-      if (searchBox) {
-        searchBox.focus();
+
+      // 2. Clear contenteditable text directly
+      const searchBoxes = Array.from(document.querySelectorAll(
+        'div[contenteditable="true"][data-tab="3"], #side div[contenteditable="true"], div[data-testid="chat-list-search"], div[role="textbox"][aria-label*="Search"]'
+      ));
+
+      for (const box of searchBoxes) {
         try {
+          box.focus();
           document.execCommand("selectAll", false, null);
           document.execCommand("delete", false, null);
-        } catch (e) {
-          searchBox.innerText = "";
-        }
+          box.innerText = "";
+          box.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" }));
+        } catch (e) {}
       }
     }
 
@@ -727,16 +738,53 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
 
       // STEP 2: WAIT FOR SEARCH RESULTS AND SELECT CHAT
       if (step === "WAIT_CHAT_OPEN") {
-        // Wait at least 1000ms for WhatsApp search debouncing
-        if (stepElapsed >= 1000) {
+        // Wait at least 800ms for WhatsApp search debouncing
+        if (stepElapsed >= 800) {
           const searchBox =
             document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
             document.querySelector('#side div[contenteditable="true"]') ||
             document.querySelector('div[data-testid="chat-list-search"]') ||
             document.querySelector('div[role="textbox"][aria-label*="Search"]');
 
-          // Trigger Enter key on search box
-          if (searchBox && (stepElapsed === 1000 || stepElapsed === 2000)) {
+          // Find matching search result: in chats, messages, or search results list
+          const queryLower = contactQuery.toLowerCase().trim();
+          
+          // Look for any result element that has title or inner text containing query
+          let chatResult = null;
+
+          // 1. Search results pane specifically
+          const allSpans = Array.from(document.querySelectorAll('#pane-side span[title], div[aria-label*="Search results"] span[title]'));
+          const matchingSpan = allSpans.find(s => (s.getAttribute("title") || "").toLowerCase().includes(queryLower));
+          if (matchingSpan) {
+            chatResult = matchingSpan.closest('div[role="listitem"], div[role="gridcell"], div[tabindex], div[data-testid="cell-frame-container"]');
+          }
+
+          if (!chatResult) {
+            // 2. Generic listitem in search results / pane-side
+            chatResult =
+              document.querySelector('div[aria-label*="Search results"] div[role="listitem"]') ||
+              document.querySelector('div[aria-label*="Search results"] div[role="gridcell"]') ||
+              document.querySelector('div[aria-label*="Search results"] div[data-testid="cell-frame-container"]') ||
+              document.querySelector('#pane-side div[role="listitem"]') ||
+              document.querySelector('div[data-testid="chat-list"] div[role="listitem"]') ||
+              document.querySelector('div[data-testid="cell-frame-container"]');
+          }
+
+          if (chatResult) {
+            clickElement(chatResult);
+            // Also dispatch Enter on search box as backup to activate first selected item
+            if (searchBox) {
+              const enterEvt = new KeyboardEvent("keydown", {
+                key: "Enter",
+                code: "Enter",
+                keyCode: 13,
+                which: 13,
+                bubbles: true,
+                cancelable: true
+              });
+              searchBox.dispatchEvent(enterEvt);
+            }
+          } else if (searchBox && (stepElapsed === 1000 || stepElapsed === 2500)) {
             const enterEvt = new KeyboardEvent("keydown", {
               key: "Enter",
               code: "Enter",
@@ -748,28 +796,20 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
             searchBox.dispatchEvent(enterEvt);
           }
 
-          // Also look for first matching search result row
-          const chatResult = document.querySelector('div[aria-label="Search results."] div[role="listitem"]') ||
-                             document.querySelector('div[aria-label="Search results."] div[role="gridcell"]') ||
-                             document.querySelector('div[aria-label="Search results."] span[title]')?.closest('div[role="listitem"], div[role="gridcell"], div[tabindex]') ||
-                             document.querySelector('div[data-testid="chat-list"] div[role="listitem"]') ||
-                             document.querySelector('#pane-side div[role="listitem"]') ||
-                             document.querySelector('div[data-testid="cell-frame-container"]');
-
-          if (chatResult) {
-            clickElement(chatResult);
-          }
-
           // Check if chat panel (#main) is now open
-          const isMainChatOpen = !!(document.querySelector('#main') && document.querySelector('#main footer'));
+          const isMainChatOpen = !!(
+            document.querySelector('#main') &&
+            (document.querySelector('#main footer') || document.querySelector('#main div[contenteditable="true"]') || document.querySelector('#main header'))
+          );
+
           if (isMainChatOpen) {
             step = "ATTACH_OR_SEND";
             stepElapsed = 0;
             return;
           }
 
-          // Timeout waiting for chat to open (after 12s of searching)
-          if (stepElapsed >= 12000) {
+          // Timeout waiting for chat to open (after 15s of searching)
+          if (stepElapsed >= 15000) {
             clearInterval(timer);
             clearSearchInput();
             return resolve({ success: false, error: `Could not open chat for "${contactQuery}". No matching contact found in WhatsApp.` });
