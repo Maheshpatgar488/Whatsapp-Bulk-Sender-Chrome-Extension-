@@ -664,35 +664,47 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
     // Helper: Find WhatsApp search box in left sidebar
     function getSearchBox() {
       return (
-        document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
+        // Standard WhatsApp Web contenteditable search box
         document.querySelector('#side div[contenteditable="true"]') ||
+        document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
         document.querySelector('div[data-testid="chat-list-search"]') ||
-        document.querySelector('div[role="textbox"][aria-label*="Search"]') ||
-        document.querySelector('div[role="textbox"][title*="Search"]') ||
-        document.querySelector('div[aria-label*="Search or start new chat"]') ||
+        document.querySelector('div[role="textbox"][aria-label*="Search" i]') ||
+        document.querySelector('div[role="textbox"][title*="Search" i]') ||
+        document.querySelector('div[aria-label*="Search" i][contenteditable="true"]') ||
+        document.querySelector('div[aria-label*="Search or start new chat" i]') ||
+        // Standard input element if rendered as HTML5 input
+        document.querySelector('#side input[type="text"]') ||
+        document.querySelector('input[type="text"][placeholder*="Search" i]') ||
+        document.querySelector('input[placeholder*="Search" i]') ||
+        // Any contenteditable outside of main chat pane
         Array.from(document.querySelectorAll('#side div[contenteditable="true"], div[contenteditable="true"]')).find(el => {
           return !el.closest('#main') && !el.closest('footer');
-        })
+        }) ||
+        // Sibling of pane-side
+        document.querySelector('#pane-side')?.parentElement?.querySelector('div[contenteditable="true"], input')
       );
     }
 
     // Helper: Clear WhatsApp Web left-hand search box completely
     function clearSearchInput() {
-      // 1. Click Cancel / Clear / Back buttons inside search container
-      const clearButtons = Array.from(document.querySelectorAll(
-        '#side button[aria-label*="Cancel"], #side button[aria-label*="Clear"], #side button[aria-label*="back" i], ' +
-        '#side span[data-icon="x-alt"], #side span[data-icon="x"], #side span[data-icon="back"], #side span[data-icon="arrow-back"], ' +
-        '#side span[data-icon="search-alt-close"], #side span[data-icon="cancel"], ' +
-        'button[aria-label="Cancel search"], button[aria-label="Clear search"], button[aria-label="Back"]'
-      ));
+      const box = getSearchBox();
+      const currentText = box ? (box.innerText || box.textContent || box.value || "").trim() : "";
 
-      for (const btnEl of clearButtons) {
-        const actualBtn = btnEl.tagName === "BUTTON" ? btnEl : btnEl.closest('button, [role="button"]') || btnEl;
-        clickElement(actualBtn);
+      // Only click clear/cancel button if there was text
+      if (currentText.length > 0) {
+        const cancelBtn =
+          document.querySelector('button[aria-label="Cancel search" i]') ||
+          document.querySelector('button[aria-label="Clear search" i]') ||
+          document.querySelector('#side span[data-icon="x-alt"]')?.closest('button, [role="button"]') ||
+          document.querySelector('#side span[data-icon="x"]')?.closest('button, [role="button"]') ||
+          document.querySelector('#side span[data-icon="search-alt-close"]')?.closest('button, [role="button"]');
+
+        if (cancelBtn) {
+          clickElement(cancelBtn);
+        }
       }
 
-      // 2. Clear contenteditable text directly with Selection API & input events
-      const box = getSearchBox();
+      // Clear contenteditable or input text directly
       if (box) {
         try {
           box.focus();
@@ -704,10 +716,10 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
           document.execCommand("delete", false, null);
           box.textContent = "";
           box.innerText = "";
+          if (box.tagName === "INPUT") box.value = "";
           box.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" }));
           box.dispatchEvent(new Event("input", { bubbles: true }));
           box.dispatchEvent(new Event("change", { bubbles: true }));
-          box.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true }));
         } catch (e) {}
       }
     }
@@ -738,7 +750,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
       // STEP 0: RESET AND ENSURE CLEAN SEARCH BAR
       if (step === "RESET_SEARCH") {
         clearSearchInput();
-        if (stepElapsed >= 500) {
+        if (stepElapsed >= 400) {
           step = "SEARCH_CONTACT";
           stepElapsed = 0;
         }
@@ -747,17 +759,18 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
 
       // STEP 1: SEARCH CONTACT IN LEFT-HAND SEARCH BAR
       if (step === "SEARCH_CONTACT") {
-        const searchBox = getSearchBox();
+        let searchBox = getSearchBox();
 
         if (!searchBox) {
           // If search icon button needs to be clicked first (collapsed search)
-          const searchTrigger = document.querySelector('button[aria-label*="Search"]') ||
+          const searchTrigger = document.querySelector('button[aria-label*="Search" i]') ||
+                                document.querySelector('#side span[data-icon="search"]')?.closest('button, [role="button"]') ||
                                 document.querySelector('span[data-icon="search"]')?.closest('button, [role="button"]');
           if (searchTrigger) {
             clickElement(searchTrigger);
           }
 
-          if (stepElapsed > 20000) {
+          if (stepElapsed > 25000) {
             clearInterval(timer);
             return resolve({ success: false, error: "WhatsApp Web search box not found. Ensure WhatsApp Web is logged in and active." });
           }
@@ -778,6 +791,10 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
           searchBox.innerText = contactQuery;
         }
 
+        if (searchBox.tagName === "INPUT") {
+          searchBox.value = contactQuery;
+        }
+
         searchBox.dispatchEvent(new InputEvent("input", {
           bubbles: true,
           cancelable: true,
@@ -788,15 +805,16 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
         searchBox.dispatchEvent(new Event("change", { bubbles: true }));
 
         // Check if text was set
-        const currentText = (searchBox.innerText || searchBox.textContent || "").trim();
+        const currentText = (searchBox.innerText || searchBox.textContent || searchBox.value || "").trim();
         if (currentText.toLowerCase().includes(contactQuery.toLowerCase().substring(0, 3))) {
           step = "WAIT_CHAT_OPEN";
           stepElapsed = 0;
           return;
         } else {
           typingAttempts++;
-          if (typingAttempts > 5) {
+          if (typingAttempts > 4) {
             searchBox.innerText = contactQuery;
+            if (searchBox.tagName === "INPUT") searchBox.value = contactQuery;
             searchBox.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: contactQuery }));
             step = "WAIT_CHAT_OPEN";
             stepElapsed = 0;
@@ -1174,15 +1192,46 @@ startBtn.addEventListener("click", async () => {
   let sent = 0;
   let failed = 0;
 
-  // Initial setup: For Live sending, ensure active tab is focused and reloaded ONCE if needed
+  // Initial setup: For Live sending, ensure active tab is focused and ready
   if (!isSafeMode) {
     try {
-      log("🔄 Initializing WhatsApp Web (one-time refresh/focus)...", "info");
-      await chrome.tabs.reload(activeTab.id);
-      // Wait for WhatsApp Web to reload and mount its interface completely
-      await new Promise((r) => setTimeout(r, 8000));
-    } catch (e) {
-      console.warn("Tab reload error:", e);
+      await chrome.tabs.update(activeTab.id, { active: true });
+      if (activeTab.windowId) {
+        await chrome.windows.update(activeTab.windowId, { focused: true });
+      }
+    } catch (e) {}
+
+    // Check if WhatsApp Web interface is already mounted
+    let isReady = false;
+    for (let attempt = 0; attempt < 15; attempt++) {
+      try {
+        const readyCheck = await chrome.scripting.executeScript({
+          target: { tabId: activeTab.id },
+          func: () => {
+            return !!(
+              document.querySelector('#side') ||
+              document.querySelector('#pane-side') ||
+              document.querySelector('div[contenteditable="true"]') ||
+              document.querySelector('div[role="textbox"]')
+            );
+          },
+          world: "MAIN"
+        });
+        if (readyCheck && readyCheck[0] && readyCheck[0].result) {
+          isReady = true;
+          break;
+        }
+      } catch (e) {}
+      if (attempt === 0) {
+        log("🔄 Verifying WhatsApp Web interface is ready...", "info");
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+
+    if (isReady) {
+      log("⚡ WhatsApp Web connected and ready.", "success");
+    } else {
+      log("⚠️ Please ensure WhatsApp Web is logged in and active.", "warning");
     }
   }
 
