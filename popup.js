@@ -532,15 +532,21 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
     // Helper: Convert base64 DataURL back to a DOM File object synchronously (100% CSP safe)
     function createDOMFile(base64Data, name, type) {
       try {
-        const parts = base64Data.split(",");
-        const mime = parts[0].match(/:(.*?);/)?.[1] || type || "application/pdf";
-        const bstr = atob(parts[1] || parts[0]);
-        let n = bstr.length;
-        const u8arr = new Uint8Array(n);
-        while (n--) {
-          u8arr[n] = bstr.charCodeAt(n);
+        if (!base64Data) return null;
+        let base64Str = base64Data;
+        if (base64Str.includes(",")) {
+          base64Str = base64Str.split(",")[1];
         }
-        return new File([u8arr], name, { type: mime });
+        base64Str = base64Str.replace(/[\r\n\s]/g, "");
+
+        const mime = type || "application/pdf";
+        const binaryStr = atob(base64Str);
+        const len = binaryStr.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+        return new File([bytes], name, { type: mime });
       } catch (err) {
         console.error("base64 to File conversion error:", err);
         return null;
@@ -563,13 +569,11 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
           const dt = new DataTransfer();
           dt.items.add(fileObj);
 
-          const dragEnterEvt = new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: dt });
-          const dragOverEvt = new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt });
-          const dropEvt = new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt });
-
-          target.dispatchEvent(dragEnterEvt);
-          target.dispatchEvent(dragOverEvt);
-          target.dispatchEvent(dropEvt);
+          ["dragenter", "dragover", "drop"].forEach((type) => {
+            const evt = new DragEvent(type, { bubbles: true, cancelable: true, composed: true });
+            Object.defineProperty(evt, "dataTransfer", { get: () => dt, value: dt, configurable: true });
+            target.dispatchEvent(evt);
+          });
         } catch (e) {
           console.error("Drag-and-Drop event dispatch error:", e);
         }
@@ -608,14 +612,8 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
           if (fileObj) {
             const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
 
-            // 2a. Attempt Drag-and-Drop file dispatch directly onto chat panel
-            dropFileOnWhatsApp(fileObj);
-
-            // 2b. Query for existing file inputs across the DOM
-            let fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-
-            // 2c. If no file inputs found in DOM, click attach button (+) to mount file inputs
-            if (fileInputs.length === 0 && attachClickCount < 3) {
+            // 2a. Click attach button (+) / paperclip icon if available to ensure attach menu / handlers are active
+            if (attachClickCount < 2) {
               const attachBtn = document.querySelector('footer div[title="Attach"]') ||
                                  document.querySelector('footer div[aria-label="Attach"]') ||
                                  document.querySelector('footer button[aria-label="Attach"]') ||
@@ -640,12 +638,15 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
               if (attachBtn) {
                 attachClickCount++;
                 clickElement(attachBtn);
-                await new Promise((r) => setTimeout(r, 600));
-                fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+                await new Promise((r) => setTimeout(r, 500));
               }
             }
 
-            // 2d. Inject File directly into target file input
+            // 2b. Attempt Drag-and-Drop file dispatch directly onto chat panel
+            dropFileOnWhatsApp(fileObj);
+
+            // 2c. Query for file inputs and inject file into target input
+            let fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
             if (fileInputs.length > 0) {
               let targetInput = null;
               if (isDocument) {
