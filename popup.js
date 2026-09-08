@@ -809,7 +809,6 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
             }
           }
         }
-        }
 
         // Strict Timeout
         if (elapsed >= maxTimeout) {
