@@ -733,67 +733,72 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
             return;
           }
 
-          // B. TRIGGER FILE ATTACHMENT ONCE IF NOT YET INJECTED
+          // B. INJECT FILE INTO WHATSAPP WEB
           if (!fileInjected) {
-            fileInjected = true; // Mark injected so it fires ONCE on tick 1
             const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
 
-            // Channel 1: Clipboard Paste Event
-            pasteFileToWhatsAppInput(fileObj);
-
-            // Channel 2: Drag & Drop Event
-            dropFileOnWhatsApp(fileObj);
-
-            // Channel 3: Input File Injection if input exists
-            const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-            const targetInput = fileInputs.find(i => isDocument ? (i.accept === "*" || i.accept.includes("*/*") || !i.accept.includes("image")) : (i.accept.includes("image") || i.accept === "*")) || fileInputs[fileInputs.length - 1] || fileInputs[0];
-            if (targetInput) {
-              injectFileIntoInput(targetInput, fileObj);
-            }
-
-            // Channel 4: Attach Menu Click
+            // Check if Attach Menu Popover is open
             const openMenu = document.querySelector('div[data-testid="attach-menu-popover"]') ||
                              document.querySelector('div[data-animate-dropdown-item="true"]') ||
                              document.querySelector('ul[role="menu"]') ||
                              document.querySelector('div[role="application"]');
 
-            if (openMenu) {
-              const menuBtn = isDocument
-                ? openMenu.querySelector('button[aria-label="Document"]') ||
-                  openMenu.querySelector('[aria-label="Document"]') ||
-                  document.querySelector('[aria-label="Document"]') ||
-                  openMenu.querySelector('span[data-icon="attach-document"]')?.closest('[role="button"], button, li') ||
-                  openMenu.querySelector('span[data-icon="document"]')?.closest('[role="button"], button, li') ||
-                  Array.from(openMenu.querySelectorAll("li, button, [role=button]")).find(el => /document/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()))
-                : openMenu.querySelector('button[aria-label="Photos & videos"]') ||
-                  openMenu.querySelector('[aria-label="Photos & videos"]') ||
-                  document.querySelector('[aria-label="Photos & videos"]') ||
-                  openMenu.querySelector('span[data-icon="attach-image"]')?.closest('[role="button"], button, li') ||
-                  openMenu.querySelector('span[data-icon="image"]')?.closest('[role="button"], button, li') ||
-                  Array.from(openMenu.querySelectorAll("li, button, [role=button]")).find(el => /photo|image/i.test((el.innerText || el.getAttribute("aria-label") || "").trim()));
+            if (!openMenu) {
+              // 1. Popover NOT open yet -> Click Attach (+) button to open popover
+              if (!attachMenuOpened) {
+                const attachBtn = document.querySelector('footer [aria-label="Attach"]') ||
+                                   document.querySelector('footer [title="Attach"]') ||
+                                   document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
+                                   document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
+                                   document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
+                                   document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]') ||
+                                   Array.from(document.querySelectorAll('footer [role="button"], footer button')).find(el => /attach/i.test(el.getAttribute("aria-label") || el.getAttribute("title") || ""));
 
-              if (menuBtn) {
-                clickElement(menuBtn);
+                if (attachBtn) {
+                  attachMenuOpened = true;
+                  clickElement(attachBtn);
+                }
               }
+              // Always trigger paste & drag-drop as fallback while waiting for popover
+              pasteFileToWhatsAppInput(fileObj);
+              dropFileOnWhatsApp(fileObj);
             } else {
-              const attachBtn = document.querySelector('footer [aria-label="Attach"]') ||
-                                 document.querySelector('footer [title="Attach"]') ||
-                                 document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
-                                 document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
-                                 document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
-                                 document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]') ||
-                                 Array.from(document.querySelectorAll('footer [role="button"], footer button')).find(el => /attach/i.test(el.getAttribute("aria-label") || el.getAttribute("title") || ""));
+              // 2. Popover IS OPEN -> Search for target file input inside popover
+              const popoverInputs = Array.from(openMenu.querySelectorAll('input[type="file"]'));
+              
+              let targetInput = popoverInputs.find(i => isDocument 
+                ? (i.accept === "*" || i.accept.includes("*/*") || !i.accept.includes("image"))
+                : (i.accept.includes("image") || i.accept === "*")
+              ) || popoverInputs[0];
 
-              if (attachBtn) {
-                clickElement(attachBtn);
+              // Fallback to any page input if popover inputs array was empty
+              if (!targetInput) {
+                const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+                targetInput = allInputs.find(i => isDocument 
+                  ? (i.accept === "*" || i.accept.includes("*/*") || !i.accept.includes("image"))
+                  : (i.accept.includes("image") || i.accept === "*")
+                ) || allInputs[0];
+              }
+
+              if (targetInput) {
+                fileInjected = true;
+                injectFileIntoInput(targetInput, fileObj);
+                pasteFileToWhatsAppInput(fileObj);
+                dropFileOnWhatsApp(fileObj);
+              } else {
+                // If popover open but input not rendered yet, trigger paste & drop
+                pasteFileToWhatsAppInput(fileObj);
+                dropFileOnWhatsApp(fileObj);
               }
             }
           } else {
-            // If 5 seconds passed without Send button appearing, reset fileInjected to retry
-            if (elapsed % 5000 === 0) {
+            // If 4 seconds passed without Send button appearing, reset fileInjected to retry
+            if (elapsed % 4000 === 0) {
               fileInjected = false;
+              attachMenuOpened = false;
             }
           }
+        }
         }
 
         // Strict Timeout
