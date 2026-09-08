@@ -121,20 +121,30 @@ function sanitizePhoneNumber(rawPhone) {
   return clean;
 }
 
-// Check WhatsApp Web Tab Status on load & interval (Checks if CURRENT ACTIVE TAB is WhatsApp Web)
+// Check WhatsApp Web Tab Status across all tabs & windows
 async function checkWhatsAppTab() {
   try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    const currentTab = tabs && tabs[0] ? tabs[0] : null;
+    const waTabs = await chrome.tabs.query({ url: "*://web.whatsapp.com/*" });
+    const isWaOpen = waTabs && waTabs.length > 0;
+
+    const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const currentTab = activeTabs && activeTabs[0] ? activeTabs[0] : null;
     const isCurrentTabWa = currentTab && currentTab.url && currentTab.url.toLowerCase().includes("web.whatsapp.com");
 
-    if (isCurrentTabWa) {
+    if (isWaOpen) {
       if (tabStatus) {
-        tabStatus.innerHTML = `<span class="pulse-dot" style="background: #27C93F;"></span><span style="color: #27C93F; font-weight: 700;">WhatsApp Connected</span>`;
+        tabStatus.innerHTML = `<span class="pulse-dot" style="background: #27C93F;"></span><span style="color: #27C93F; font-weight: 700;">WhatsApp Connected ${isCurrentTabWa ? '' : '(Tab Open)'}</span>`;
         tabStatus.style.background = "rgba(39, 201, 63, 0.15)";
         tabStatus.style.border = "1px solid rgba(39, 201, 63, 0.3)";
       }
-      if (openTabBtn) openTabBtn.style.display = "none";
+      if (openTabBtn) {
+        if (isCurrentTabWa) {
+          openTabBtn.style.display = "none";
+        } else {
+          openTabBtn.style.display = "block";
+          openTabBtn.innerHTML = "🌐 Switch to WhatsApp Web Tab";
+        }
+      }
     } else {
       if (tabStatus) {
         tabStatus.innerHTML = `<span class="pulse-dot" style="background: #FF5F56;"></span><span style="color: #FF5F56; font-weight: 700;">WhatsApp Disconnected</span>`;
@@ -143,7 +153,7 @@ async function checkWhatsAppTab() {
       }
       if (openTabBtn) {
         openTabBtn.style.display = "block";
-        openTabBtn.innerHTML = "🌐 Switch to / Open WhatsApp Web";
+        openTabBtn.innerHTML = "🌐 Open WhatsApp Web";
       }
     }
   } catch (e) {
@@ -900,6 +910,12 @@ startBtn.addEventListener("click", async () => {
     const allWa = await chrome.tabs.query({ url: "*://web.whatsapp.com/*" });
     if (allWa && allWa.length > 0) {
       activeTab = allWa[0];
+      try {
+        await chrome.tabs.update(activeTab.id, { active: true });
+        if (activeTab.windowId) {
+          await chrome.windows.update(activeTab.windowId, { focused: true });
+        }
+      } catch (e) {}
     }
   }
 
