@@ -546,12 +546,15 @@ function buildMessage(template, contact) {
 async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, captionText) {
   return new Promise((resolve) => {
     let elapsed = 0;
-    const pollInterval = 300;
-    const maxTimeout = 40000;
-    let step = "SEARCH_CONTACT"; // Steps: SEARCH_CONTACT -> WAIT_CHAT_OPEN -> ATTACH_OR_SEND
+    const pollInterval = 250;
+    const maxTimeout = 45000;
+    // States: RESET_SEARCH -> TYPE_SEARCH -> WAIT_CHAT_OPEN -> ATTACH_OR_SEND
+    let step = "RESET_SEARCH";
     let stepElapsed = 0;
     let lastAttachClick = 0;
     let lastInjectionTime = 0;
+    let lastDropTime = 0;
+    let typingAttempts = 0;
 
     // Helper: Synthetic Mouse & Pointer Event trigger for React / Web Components
     function clickElement(el) {
@@ -597,15 +600,25 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
       }
     }
 
-    // Helper: Inject file object into HTMLInputElement safely for React 17/18/19
+    // Helper: Inject file object into HTMLInputElement safely for React
     function injectFileIntoInput(targetInput, fileObj) {
       try {
         const dt = new DataTransfer();
         dt.items.add(fileObj);
 
-        try { targetInput.value = ""; } catch (e) {}
-        targetInput.files = dt.files;
+        // 1. Invoke native prototype setter to bypass React 17/18 synthetic property interceptors
+        try {
+          const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files");
+          if (descriptor && descriptor.set) {
+            descriptor.set.call(targetInput, dt.files);
+          } else {
+            targetInput.files = dt.files;
+          }
+        } catch (e) {
+          targetInput.files = dt.files;
+        }
 
+        // 2. Ensure property get returns dt.files
         try {
           Object.defineProperty(targetInput, "files", {
             get: () => dt.files,
@@ -613,10 +626,12 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
           });
         } catch (e) {}
 
+        // 3. Clear React internal value tracker if present
         if (targetInput._valueTracker) {
           try { targetInput._valueTracker.setValue(""); } catch (e) {}
         }
 
+        // 4. Dispatch bubbling HTML5 input and change events
         const evtOpts = { bubbles: true, cancelable: true, composed: true };
         targetInput.dispatchEvent(new Event("input", evtOpts));
         targetInput.dispatchEvent(new Event("change", evtOpts));
@@ -627,13 +642,47 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
       }
     }
 
-    // Helper: Clear WhatsApp Web left-hand search box
+    // Helper: Drag-and-drop fallback simulation for modern web apps
+    function simulateDrop(targetEl, fileObj) {
+      try {
+        if (!targetEl || !fileObj) return;
+        const dt = new DataTransfer();
+        dt.items.add(fileObj);
+
+        const dragenter = new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: dt });
+        const dragover = new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt });
+        const drop = new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt });
+
+        targetEl.dispatchEvent(dragenter);
+        targetEl.dispatchEvent(dragover);
+        targetEl.dispatchEvent(drop);
+      } catch (e) {
+        console.warn("simulateDrop error:", e);
+      }
+    }
+
+    // Helper: Find WhatsApp search box in left sidebar
+    function getSearchBox() {
+      return (
+        document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
+        document.querySelector('#side div[contenteditable="true"]') ||
+        document.querySelector('div[data-testid="chat-list-search"]') ||
+        document.querySelector('div[role="textbox"][aria-label*="Search"]') ||
+        document.querySelector('div[role="textbox"][title*="Search"]') ||
+        document.querySelector('div[aria-label*="Search or start new chat"]') ||
+        Array.from(document.querySelectorAll('#side div[contenteditable="true"], div[contenteditable="true"]')).find(el => {
+          return !el.closest('#main') && !el.closest('footer');
+        })
+      );
+    }
+
+    // Helper: Clear WhatsApp Web left-hand search box completely
     function clearSearchInput() {
-      // 1. Target clear / cancel search buttons inside search bar container (#side)
+      // 1. Click Cancel / Clear / Back buttons inside search container
       const clearButtons = Array.from(document.querySelectorAll(
         '#side button[aria-label*="Cancel"], #side button[aria-label*="Clear"], #side button[aria-label*="back" i], ' +
         '#side span[data-icon="x-alt"], #side span[data-icon="x"], #side span[data-icon="back"], #side span[data-icon="arrow-back"], ' +
-        'div[data-testid="chat-list-search"] ~ button, div[data-tab="3"] ~ button, ' +
+        '#side span[data-icon="search-alt-close"], #side span[data-icon="cancel"], ' +
         'button[aria-label="Cancel search"], button[aria-label="Clear search"], button[aria-label="Back"]'
       ));
 
@@ -642,21 +691,22 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
         clickElement(actualBtn);
       }
 
-      // 2. Clear contenteditable text directly with multiple event types
-      const searchBoxes = Array.from(document.querySelectorAll(
-        'div[contenteditable="true"][data-tab="3"], #side div[contenteditable="true"], div[data-testid="chat-list-search"], div[role="textbox"][aria-label*="Search"], div[role="textbox"][title*="Search"]'
-      ));
-
-      for (const box of searchBoxes) {
+      // 2. Clear contenteditable text directly with Selection API & input events
+      const box = getSearchBox();
+      if (box) {
         try {
           box.focus();
-          document.execCommand("selectAll", false, null);
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(box);
+          sel.removeAllRanges();
+          sel.addRange(range);
           document.execCommand("delete", false, null);
           box.textContent = "";
           box.innerText = "";
           box.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" }));
-          box.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
-          // Also press Escape to exit search focus if needed
+          box.dispatchEvent(new Event("input", { bubbles: true }));
+          box.dispatchEvent(new Event("change", { bubbles: true }));
           box.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true }));
         } catch (e) {}
       }
@@ -685,102 +735,129 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
         }
       }
 
+      // STEP 0: RESET AND ENSURE CLEAN SEARCH BAR
+      if (step === "RESET_SEARCH") {
+        clearSearchInput();
+        if (stepElapsed >= 500) {
+          step = "SEARCH_CONTACT";
+          stepElapsed = 0;
+        }
+        return;
+      }
+
       // STEP 1: SEARCH CONTACT IN LEFT-HAND SEARCH BAR
       if (step === "SEARCH_CONTACT") {
-        // Modern WhatsApp Web Search Box selectors
-        const searchBox =
-          document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
-          document.querySelector('#side div[contenteditable="true"]') ||
-          document.querySelector('div[data-testid="chat-list-search"]') ||
-          document.querySelector('div[role="textbox"][aria-label*="Search"]') ||
-          document.querySelector('div[role="textbox"][title*="Search"]') ||
-          document.querySelector('div[aria-label*="Search or start new chat"]') ||
-          document.querySelector('#pane-side')?.parentElement?.querySelector('div[contenteditable="true"]') ||
-          Array.from(document.querySelectorAll('div[contenteditable="true"]')).find(el => {
-            return !el.closest('#main') && !el.closest('footer');
-          }) ||
-          document.querySelector('input[type="text"][placeholder*="Search"]');
+        const searchBox = getSearchBox();
 
         if (!searchBox) {
-          // If search icon button needs to be clicked first (e.g. collapsed search)
+          // If search icon button needs to be clicked first (collapsed search)
           const searchTrigger = document.querySelector('button[aria-label*="Search"]') ||
                                 document.querySelector('span[data-icon="search"]')?.closest('button, [role="button"]');
           if (searchTrigger) {
             clickElement(searchTrigger);
           }
 
-          if (stepElapsed > 25000) {
+          if (stepElapsed > 20000) {
             clearInterval(timer);
             return resolve({ success: false, error: "WhatsApp Web search box not found. Ensure WhatsApp Web is logged in and active." });
           }
           return;
         }
 
-        // Clear search box first
-        clearSearchInput();
-
-        // Focus and type contact query
+        // Focus and type contact query using selection and execCommand
         searchBox.focus();
         try {
-          document.execCommand("selectAll", false, null);
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(searchBox);
+          sel.removeAllRanges();
+          sel.addRange(range);
           document.execCommand("delete", false, null);
           document.execCommand("insertText", false, contactQuery);
         } catch (e) {
           searchBox.innerText = contactQuery;
         }
-        searchBox.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: contactQuery }));
 
-        // Move to waiting for search results and opening chat
-        step = "WAIT_CHAT_OPEN";
-        stepElapsed = 0;
+        searchBox.dispatchEvent(new InputEvent("input", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: contactQuery
+        }));
+        searchBox.dispatchEvent(new Event("input", { bubbles: true }));
+        searchBox.dispatchEvent(new Event("change", { bubbles: true }));
+
+        // Check if text was set
+        const currentText = (searchBox.innerText || searchBox.textContent || "").trim();
+        if (currentText.toLowerCase().includes(contactQuery.toLowerCase().substring(0, 3))) {
+          step = "WAIT_CHAT_OPEN";
+          stepElapsed = 0;
+          return;
+        } else {
+          typingAttempts++;
+          if (typingAttempts > 5) {
+            searchBox.innerText = contactQuery;
+            searchBox.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: contactQuery }));
+            step = "WAIT_CHAT_OPEN";
+            stepElapsed = 0;
+            return;
+          }
+        }
         return;
       }
 
       // STEP 2: WAIT FOR SEARCH RESULTS AND SELECT CHAT
       if (step === "WAIT_CHAT_OPEN") {
-        // Wait at least 600ms for WhatsApp search debouncing
         if (stepElapsed >= 600) {
-          const searchBox =
-            document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
-            document.querySelector('#side div[contenteditable="true"]') ||
-            document.querySelector('div[data-testid="chat-list-search"]') ||
-            document.querySelector('div[role="textbox"][aria-label*="Search"]');
-
+          const searchBox = getSearchBox();
           const queryLower = contactQuery.toLowerCase().trim();
+          const queryWords = queryLower.split(/\s+/).filter(w => w.length >= 2);
 
-          // 1. Look for matching chat result under Chats section or search results pane
-          // Look for title span matching query, or avatar/cell container
           let targetElToClick = null;
 
+          // 1. Look for matching title in search results
           const allSpans = Array.from(document.querySelectorAll('#pane-side span[title], div[aria-label*="Search results"] span[title]'));
-          const matchingSpan = allSpans.find(s => {
+
+          // Exact or substring match
+          let matchingSpan = allSpans.find(s => {
             const title = (s.getAttribute("title") || "").toLowerCase().trim();
-            return title.includes(queryLower) || queryLower.includes(title);
+            return title === queryLower || title.includes(queryLower) || queryLower.includes(title);
           });
+
+          // Word-level match if not found (e.g. "Mahesh" or "Yash")
+          if (!matchingSpan && queryWords.length > 0) {
+            matchingSpan = allSpans.find(s => {
+              const title = (s.getAttribute("title") || "").toLowerCase().trim();
+              return queryWords.some(word => title.includes(word));
+            });
+          }
 
           if (matchingSpan) {
             targetElToClick = matchingSpan;
           } else {
-            // Check textContent in cell containers
+            // 2. Check cell containers under #pane-side
             const cells = Array.from(document.querySelectorAll('#pane-side div[data-testid="cell-frame-container"], #pane-side div[role="listitem"]'));
-            const matchingCell = cells.find(c => (c.textContent || "").toLowerCase().includes(queryLower));
+
+            const matchingCell = cells.find(c => {
+              const text = (c.textContent || "").toLowerCase();
+              return text.includes(queryLower) || queryWords.some(w => text.includes(w));
+            });
+
             if (matchingCell) {
               targetElToClick = matchingCell.querySelector('span[title]') || matchingCell;
-            } else if (cells.length > 0) {
-              // Pick the top search result (first row under Chats)
+            } else if (cells.length > 0 && stepElapsed > 3000) {
+              // Pick the top search result after 3 seconds
               targetElToClick = cells[0].querySelector('span[title]') || cells[0];
             }
           }
 
           if (targetElToClick) {
-            // Click both the inner element (span/avatar) and parent listitem/cell
             const parentRow = targetElToClick.closest('div[role="listitem"], div[role="gridcell"], div[tabindex], div[data-testid="cell-frame-container"]') || targetElToClick;
             clickElement(targetElToClick);
             if (parentRow && parentRow !== targetElToClick) {
               clickElement(parentRow);
             }
 
-            // Also dispatch Enter on the search box to trigger selection
             if (searchBox) {
               const enterEvt = new KeyboardEvent("keydown", {
                 key: "Enter",
@@ -793,7 +870,6 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
               searchBox.dispatchEvent(enterEvt);
             }
           } else if (searchBox && (stepElapsed % 1500 === 0)) {
-            // Periodically press Enter on search box as fallback
             const enterEvt = new KeyboardEvent("keydown", {
               key: "Enter",
               code: "Enter",
@@ -815,8 +891,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
             return;
           }
 
-          // Timeout waiting for chat to open (after 15s of searching)
-          if (stepElapsed >= 15000) {
+          if (stepElapsed >= 18000) {
             clearInterval(timer);
             clearSearchInput();
             return resolve({ success: false, error: `Could not open chat for "${contactQuery}". No matching contact found in WhatsApp.` });
@@ -855,7 +930,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
           if (isPreviewActive && mediaViewer) {
             sendBtn =
               mediaViewer.querySelector('div[data-testid="media-caption-input-container"]')?.parentElement?.querySelector('span[data-icon="send"], span[data-icon="wds-send-solid"], span[data-icon="send-filled"]')?.closest('button, [role="button"], div[role="button"]') ||
-              Array.from(mediaViewer.querySelectorAll('span[data-icon="send"], span[data-icon="wds-send-solid"], span[data-icon="send-filled"]'))
+              Array.from(document.querySelectorAll('span[data-icon="send"], span[data-icon="wds-send-solid"], span[data-icon="send-filled"]'))
                 .map(s => s.closest('button, [role="button"], div[role="button"]'))
                 .find(b => b && !b.closest('footer')) ||
               Array.from(mediaViewer.querySelectorAll('button, div[role="button"]')).find(b => {
@@ -865,7 +940,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
               });
           }
 
-          // IF MEDIA PREVIEW IS ACTIVE AND MEDIA SEND BUTTON IS FOUND:
+          // IF MEDIA PREVIEW IS ACTIVE AND SEND BUTTON IS FOUND:
           if (isPreviewActive && sendBtn) {
             clearInterval(timer);
 
@@ -893,49 +968,71 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
               setTimeout(() => {
                 clearSearchInput();
                 resolve({ success: true, details: `Photo/Video & Greeting Sent to ${contactQuery}` });
-              }, 2000);
+              }, 2500);
             }, 600);
             return;
           }
 
-          // IF NOT IN PREVIEW YET: INJECT PHOTO/VIDEO INTO WHATSAPP
+          // IF NOT IN PREVIEW YET: DETECT ATTACH MENU OR OPEN IT
           const now = Date.now();
-          const openMenu = document.querySelector('div[data-testid="attach-menu-popover"]') ||
-                           document.querySelector('div[data-animate-dropdown-item="true"]') ||
-                           document.querySelector('ul[role="menu"]') ||
-                           document.querySelector('div[role="application"]');
 
-          if (openMenu) {
-            // Attach menu is open: inject into Photos & Videos file input
-            if (now - lastInjectionTime > 3000) {
-              const popoverInputs = Array.from(openMenu.querySelectorAll('input[type="file"]'));
-              const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-              const candidateInputs = popoverInputs.length > 0 ? popoverInputs : allInputs;
+          // Check if "Photos & videos" option exists in the DOM
+          const photosVideosOption = Array.from(document.querySelectorAll('span, div, li, button')).find(el => {
+            const text = (el.innerText || el.textContent || "").trim();
+            return /^photos\s*(&|and)\s*videos$/i.test(text);
+          });
 
-              const targetInput = candidateInputs.find(i => i.accept && (i.accept.includes("image") || i.accept.includes("video"))) ||
-                                  allInputs.find(i => i.accept && (i.accept.includes("image") || i.accept.includes("video"))) ||
-                                  candidateInputs[0];
+          // Check for file inputs in DOM
+          const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+          const mediaInput = fileInputs.find(i => {
+            const acc = (i.getAttribute("accept") || "").toLowerCase();
+            return acc.includes("image") || acc.includes("video");
+          });
 
-              if (targetInput) {
-                lastInjectionTime = now;
-                injectFileIntoInput(targetInput, fileObj);
-              }
+          const isMenuOpen = !!(photosVideosOption || (fileInputs.length > 0 && lastAttachClick > 0));
+
+          if (isMenuOpen) {
+            // ATTACH MENU IS OPEN: DO NOT CLICK ATTACH BUTTON AGAIN (would close menu)!
+            // Inject file into Photos & Videos input
+            const targetInput = mediaInput ||
+                                photosVideosOption?.closest('li, div[role="button"], button')?.querySelector('input[type="file"]') ||
+                                fileInputs.find(i => (i.getAttribute("accept") || "").includes("image") || (i.getAttribute("accept") || "").includes("video")) ||
+                                fileInputs[0];
+
+            if (targetInput && (now - lastInjectionTime > 2000)) {
+              lastInjectionTime = now;
+              injectFileIntoInput(targetInput, fileObj);
+            }
+
+            // Also try drop event fallback if preview didn't open after 3.5s
+            if (stepElapsed > 3500 && (now - lastDropTime > 2500)) {
+              lastDropTime = now;
+              simulateDrop(document.querySelector('#main') || document.body, fileObj);
             }
           } else {
-            // Attach menu not open yet -> Click Attach (+) button
-            if (now - lastAttachClick > 1200) {
+            // ATTACH MENU NOT OPEN: Click Attach (+) button ONCE and wait at least 4s before re-clicking
+            if (now - lastAttachClick > 4000) {
               lastAttachClick = now;
-              const attachBtn = document.querySelector('footer [aria-label="Attach"]') ||
-                                 document.querySelector('footer [title="Attach"]') ||
-                                 document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
-                                 document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
-                                 document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
-                                 document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]') ||
-                                 Array.from(document.querySelectorAll('footer [role="button"], footer button')).find(el => /attach/i.test(el.getAttribute("aria-label") || el.getAttribute("title") || ""));
+              const attachBtn =
+                document.querySelector('footer [aria-label="Attach"]') ||
+                document.querySelector('footer [title="Attach"]') ||
+                document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
+                document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
+                document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
+                document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]') ||
+                Array.from(document.querySelectorAll('footer [role="button"], footer button')).find(el =>
+                  /attach/i.test(el.getAttribute("aria-label") || el.getAttribute("title") || "")
+                );
 
               if (attachBtn) {
                 clickElement(attachBtn);
               }
+            }
+
+            // Also try simulated drop directly on chat area
+            if (stepElapsed > 4000 && (now - lastDropTime > 3000)) {
+              lastDropTime = now;
+              simulateDrop(document.querySelector('#main') || document.body, fileObj);
             }
           }
         } else {
@@ -1197,6 +1294,25 @@ startBtn.addEventListener("click", async () => {
 
     // Pacing delay between contacts
     if (i < contacts.length - 1 && isSending) {
+      // Clear WhatsApp search input between contacts to reset the chat list view
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: activeTab.id },
+          func: () => {
+            const clearButtons = Array.from(document.querySelectorAll(
+              '#side button[aria-label*="Cancel"], #side button[aria-label*="Clear"], #side button[aria-label*="back" i], ' +
+              '#side span[data-icon="x-alt"], #side span[data-icon="x"], #side span[data-icon="back"], #side span[data-icon="search-alt-close"], ' +
+              'button[aria-label="Cancel search"], button[aria-label="Clear search"]'
+            ));
+            for (const b of clearButtons) {
+              const act = b.tagName === "BUTTON" ? b : b.closest('button, [role="button"]') || b;
+              if (act && typeof act.click === "function") act.click();
+            }
+          },
+          world: "MAIN"
+        });
+      } catch (e) {}
+
       const waitSec = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
       log(`Pacing interval: waiting ${waitSec}s before next contact...`, "info");
       await new Promise((resolve) => setTimeout(resolve, waitSec * 1000));
