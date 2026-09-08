@@ -636,54 +636,83 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         if (fileObj) {
           const isDocument = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
 
-          // Periodically dispatch file injection triggers every ~1.2s
-          if (elapsed % 1200 < pollInterval) {
+          // Periodically dispatch file injection triggers every ~1.0s
+          if (elapsed % 1000 < pollInterval) {
             // Trigger 1: Paste Event
             pasteFileToWhatsAppInput(fileObj);
 
             // Trigger 2: Drag and Drop
             dropFileOnWhatsApp(fileObj);
 
-            // Trigger 3: Attach Button & File Input Injection
-            if (attachClickCount < 3) {
-              const attachBtn = document.querySelector('footer div[title="Attach"]') ||
-                                 document.querySelector('footer div[aria-label="Attach"]') ||
-                                 document.querySelector('footer button[aria-label="Attach"]') ||
-                                 document.querySelector('footer button[title="Attach"]') ||
-                                 document.querySelector('footer span[data-icon="clip"]')?.closest("button") ||
-                                 document.querySelector('footer span[data-icon="plus"]')?.closest("button") ||
-                                 document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest("button") ||
-                                 document.querySelector('footer span[data-icon="clip"]') ||
-                                 document.querySelector('footer span[data-icon="plus"]');
+            // Trigger 3: Attach Button & Menu Item Selection
+            const openMenu = document.querySelector('div[data-animate-dropdown-item="true"]') ||
+                             document.querySelector('div[data-testid="attach-menu-popover"]') ||
+                             document.querySelector('ul[role="menu"]') ||
+                             document.querySelector('div[role="application"]');
 
-              if (attachBtn) {
-                attachClickCount++;
-                clickElement(attachBtn);
+            if (openMenu) {
+              // Attach menu is open -> Click Document or Image menu item
+              let menuBtn = null;
+              if (isDocument) {
+                menuBtn = openMenu.querySelector('span[data-icon="attach-document"]')?.closest("button") ||
+                          openMenu.querySelector('span[data-icon="attach-document"]')?.closest("li") ||
+                          openMenu.querySelector('span[data-icon="attach-document"]')?.closest("div") ||
+                          openMenu.querySelector('span[data-icon="document"]')?.closest("button") ||
+                          openMenu.querySelector('span[data-icon="document"]')?.closest("li") ||
+                          openMenu.querySelector('button[aria-label="Document"]') ||
+                          openMenu.querySelector('li[aria-label="Document"]') ||
+                          Array.from(openMenu.querySelectorAll("li, button, div")).find(el => /document/i.test(el.innerText || ""));
+              } else {
+                menuBtn = openMenu.querySelector('span[data-icon="attach-image"]')?.closest("button") ||
+                          openMenu.querySelector('span[data-icon="attach-image"]')?.closest("li") ||
+                          openMenu.querySelector('span[data-icon="attach-image"]')?.closest("div") ||
+                          openMenu.querySelector('span[data-icon="image"]')?.closest("button") ||
+                          openMenu.querySelector('span[data-icon="image"]')?.closest("li") ||
+                          openMenu.querySelector('button[aria-label="Photos & videos"]') ||
+                          openMenu.querySelector('li[aria-label="Photos & videos"]') ||
+                          Array.from(openMenu.querySelectorAll("li, button, div")).find(el => /photo|image/i.test(el.innerText || ""));
+              }
+
+              if (menuBtn) {
+                clickElement(menuBtn);
+              }
+            } else {
+              // Attach menu is not open -> Click Attach icon
+              if (attachClickCount < 5) {
+                const attachBtn = document.querySelector('footer div[title="Attach"]') ||
+                                   document.querySelector('footer div[aria-label="Attach"]') ||
+                                   document.querySelector('footer button[aria-label="Attach"]') ||
+                                   document.querySelector('footer button[title="Attach"]') ||
+                                   document.querySelector('footer span[data-icon="clip"]')?.closest("button") ||
+                                   document.querySelector('footer span[data-icon="plus"]')?.closest("button") ||
+                                   document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest("button") ||
+                                   document.querySelector('footer span[data-icon="clip"]') ||
+                                   document.querySelector('footer span[data-icon="plus"]');
+
+                if (attachBtn) {
+                  attachClickCount++;
+                  clickElement(attachBtn);
+                }
               }
             }
 
+            // Trigger 4: Inject File Object into ALL <input type="file"> elements
             const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
-            if (fileInputs.length > 0) {
-              let targetInput = isDocument ?
-                (fileInputs.find((i) => i.accept === "*" || i.accept === "*/*" || i.accept.includes("document") || i.accept.includes("pdf")) || fileInputs[fileInputs.length - 1]) :
-                (fileInputs.find((i) => i.accept.includes("image") || i.accept.includes("video")) || fileInputs[0]);
-
-              if (targetInput) {
-                try {
-                  const dt = new DataTransfer();
-                  dt.items.add(fileObj);
-                  const propDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files");
-                  if (propDesc && propDesc.set) {
-                    propDesc.set.call(targetInput, dt.files);
-                  } else {
-                    targetInput.files = dt.files;
-                  }
-                  const evtOpts = { bubbles: true, cancelable: true, composed: true };
-                  targetInput.dispatchEvent(new Event("change", evtOpts));
-                  targetInput.dispatchEvent(new Event("input", evtOpts));
-                } catch (e) {}
-              }
-            }
+            fileInputs.forEach((targetInput) => {
+              try {
+                const dt = new DataTransfer();
+                dt.items.add(fileObj);
+                const propDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files");
+                if (propDesc && propDesc.set) {
+                  propDesc.set.call(targetInput, dt.files);
+                } else {
+                  targetInput.files = dt.files;
+                }
+                const evtOpts = { bubbles: true, cancelable: true, composed: true };
+                targetInput.dispatchEvent(new Event("change", evtOpts));
+                targetInput.dispatchEvent(new Event("input", evtOpts));
+              } catch (e) {}
+            });
           }
 
           // Check for Media / Document Preview Modal
@@ -726,7 +755,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         }
 
         // Strict Timeout: Never fallback to text-only if user explicitly attached media!
-        if (elapsed >= 25000) {
+        if (elapsed >= 35000) {
           clearInterval(timer);
           return resolve({ success: false, error: `Could not attach PDF document (${mediaPayload.name}) to WhatsApp Web. Please ensure WhatsApp Web chat panel is open.` });
         }
