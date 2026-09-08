@@ -513,6 +513,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
     const maxTimeout = 30000;
     let hasInjectedMedia = false;
     let isInjectingMedia = false;
+    let hasClickedAttachBtn = false;
     let mediaAttemptTime = 0;
 
     // Helper: Synthetic MouseEvent trigger for React / Web Components
@@ -577,8 +578,9 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
           // 2a. Query for existing file inputs
           let fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
 
-          // 2b. If no file inputs found, click Attach button to open attach menu
-          if (fileInputs.length === 0) {
+          // 2b. If no file inputs found and attach button not clicked yet, click ONCE to reveal menu
+          if (fileInputs.length === 0 && !hasClickedAttachBtn) {
+            hasClickedAttachBtn = true;
             const attachBtn = document.querySelector('div[title="Attach"]') ||
                                document.querySelector('div[aria-label="Attach"]') ||
                                document.querySelector('button[aria-label="Attach"]') ||
@@ -594,7 +596,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
 
             if (attachBtn) {
               clickElement(attachBtn);
-              await new Promise((r) => setTimeout(r, 350));
+              await new Promise((r) => setTimeout(r, 400));
 
               // Click Document / Image item in dropdown if present
               const isDoc = !mediaPayload.type.startsWith("image/") && !mediaPayload.type.startsWith("video/");
@@ -607,7 +609,7 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
                                document.querySelector('span[data-icon="image"]')?.closest("li"));
 
               if (docItem) clickElement(docItem);
-              await new Promise((r) => setTimeout(r, 350));
+              await new Promise((r) => setTimeout(r, 400));
               fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
             }
           }
@@ -688,8 +690,8 @@ async function triggerWhatsAppSendInPage(mediaPayload, captionText) {
         }
       }
 
-      // 3. FALLBACK FOR TEXT SENDING (If no media attached OR if media preview modal did not open after 7 seconds)
-      const shouldSendTextOnly = (!mediaPayload || !mediaPayload.base64) || (mediaAttemptTime > 0 && Date.now() - mediaAttemptTime > 7000 && !hasInjectedMedia);
+      // 3. FALLBACK FOR TEXT SENDING (If no media attached OR if media preview modal did not dispatch after 5.5 seconds)
+      const shouldSendTextOnly = (!mediaPayload || !mediaPayload.base64) || (mediaAttemptTime > 0 && Date.now() - mediaAttemptTime > 5500);
 
       if (shouldSendTextOnly) {
         const sendButton =
