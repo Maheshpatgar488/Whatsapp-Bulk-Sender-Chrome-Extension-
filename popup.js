@@ -192,6 +192,72 @@ function sanitizePhoneNumber(rawPhone) {
   return clean;
 }
 
+// Clean contact name: remove any trailing or embedded phone numbers, brackets, dashes
+function cleanNameString(name) {
+  if (!name) return "";
+  let clean = String(name).trim();
+  clean = clean.replace(/^["']+|["']+$/g, "").trim();
+  // Strip trailing phone numbers / digits (e.g. "Mahesh Patgar 919967949880" -> "Mahesh Patgar")
+  clean = clean.replace(/[-–—/\\|:,]?\s*(\+?\d[\d\s\-().]{6,}\d|\d{7,})\s*$/g, "").trim();
+  // Strip leading phone numbers (e.g. "919967949880 Mahesh Patgar" -> "Mahesh Patgar")
+  clean = clean.replace(/^(\+?\d[\d\s\-().]{6,}\d|\d{7,})\s*[-–—/\\|:,]?\s*/g, "").trim();
+  // If only digits and punctuation remain, it is not a real name
+  if (/^[\d\s+()\-.]+$/.test(clean)) return "";
+  return clean;
+}
+
+// Extract clean name and sanitized phone number from a raw string or cell
+function extractNameAndPhone(rawLine) {
+  if (!rawLine) return { name: "", phone: "" };
+  let str = String(rawLine).trim().replace(/^["']+|["']+$/g, "").trim();
+
+  // 1. Delimited by comma, tab, pipe, colon, or semicolon
+  if (/[,\t|:;]/.test(str)) {
+    const parts = str.split(/[,\t|:;]/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      const p0Digits = sanitizePhoneNumber(parts[0]);
+      const p1Digits = sanitizePhoneNumber(parts[1]);
+
+      if (p0Digits.length >= 7 && p1Digits.length < 7) {
+        return { name: cleanNameString(parts[1]), phone: p0Digits };
+      } else if (p1Digits.length >= 7 && p0Digits.length < 7) {
+        return { name: cleanNameString(parts[0]), phone: p1Digits };
+      } else if (p1Digits.length >= 7) {
+        return { name: cleanNameString(parts[0]), phone: p1Digits };
+      }
+    }
+  }
+
+  // 2. Name followed by phone number (e.g. "Mahesh Patgar +91 99679 49880" or "Mahesh Patgar 123456789")
+  const nameThenPhone = str.match(/^(.*?)[,\s\-–—:|]+(\+?\d[\d\s\-().]{6,}\d|\d{7,})$/);
+  if (nameThenPhone) {
+    const namePart = cleanNameString(nameThenPhone[1]);
+    const phonePart = sanitizePhoneNumber(nameThenPhone[2]);
+    if (phonePart.length >= 7) {
+      return { name: namePart, phone: phonePart };
+    }
+  }
+
+  // 3. Phone number followed by name (e.g. "+91 99679 49880 Mahesh Patgar")
+  const phoneThenName = str.match(/^(\+?\d[\d\s\-().]{6,}\d|\d{7,})[,\s\-–—:|]+(.*?)$/);
+  if (phoneThenName) {
+    const phonePart = sanitizePhoneNumber(phoneThenName[1]);
+    const namePart = cleanNameString(phoneThenName[2]);
+    if (phonePart.length >= 7) {
+      return { name: namePart, phone: phonePart };
+    }
+  }
+
+  // 4. Pure phone number
+  const onlyPhone = sanitizePhoneNumber(str);
+  if (onlyPhone.length >= 7 && /^[\d\s+()\-.]+$/.test(str)) {
+    return { name: "", phone: onlyPhone };
+  }
+
+  // 5. Pure name
+  return { name: cleanNameString(str), phone: "" };
+}
+
 // Check WhatsApp Web Tab Status across all tabs & windows
 async function checkWhatsAppTab() {
   try {
@@ -457,50 +523,15 @@ function parseTXT(text) {
       continue;
     }
 
-    let name = "";
-    let rawPhone = "";
+    const { name, phone } = extractNameAndPhone(rawLine);
+    const finalName = name || (phone ? "Customer" : "");
+    const cleanPhone = phone || "";
 
-    // Check if line contains separator: comma, colon, pipe, or tab
-    if (/[,\t:|]/.test(rawLine)) {
-      const parts = rawLine.split(/[,\t:|]/).map(p => p.trim());
-      if (parts.length >= 2) {
-        const part0Clean = sanitizePhoneNumber(parts[0]);
-        const part1Clean = sanitizePhoneNumber(parts[1]);
-
-        if (part0Clean.length >= 8) {
-          rawPhone = parts[0];
-          name = parts[1] || "Customer";
-        } else if (part1Clean.length >= 8) {
-          name = parts[0] || "Customer";
-          rawPhone = parts[1];
-        } else {
-          name = parts[0];
-          rawPhone = parts[1];
-        }
-      }
-    } else {
-      const cleanOnlyPhone = sanitizePhoneNumber(rawLine);
-      if (cleanOnlyPhone.length >= 8) {
-        rawPhone = rawLine;
-        name = "Customer";
-      } else {
-        // Line is a contact name alone
-        name = rawLine;
-        rawPhone = "";
-      }
-    }
-
-    // Ignore lines that are just literal header text
-    if (/^(name|phone|mobile|number)$/i.test(name) && !rawPhone) continue;
-
-    const cleanPhone = sanitizePhoneNumber(rawPhone);
-    const finalName = name.trim() || (cleanPhone ? "Customer" : "");
-
-    if (finalName || (cleanPhone && cleanPhone.length >= 8)) {
+    if (finalName || (cleanPhone && cleanPhone.length >= 7)) {
       parsed.push({
-        Name: finalName || cleanPhone,
-        Phone: cleanPhone || finalName,
-        _parsedName: finalName || cleanPhone,
+        Name: finalName,
+        Phone: cleanPhone,
+        _parsedName: finalName,
         _parsedPhone: cleanPhone
       });
     }
@@ -609,16 +640,34 @@ fileInput.addEventListener("change", (e) => {
         const nameKey = Object.keys(row).find((k) => /name|customer|client|recipient|user/i.test(k));
         const phoneKey = Object.keys(row).find((k) => /phone|mobile|number|contact|cell|tel/i.test(k));
 
-        const name = nameKey && row[nameKey] ? String(row[nameKey]).trim() : "Customer";
-        const rawPhone = phoneKey ? row[phoneKey] : "";
-        const phone = sanitizePhoneNumber(rawPhone);
+        let rawName = nameKey && row[nameKey] ? String(row[nameKey]).trim() : "";
+        let rawPhone = phoneKey && row[phoneKey] ? String(row[phoneKey]).trim() : "";
+
+        // If rawName contains both name and phone
+        if (rawName) {
+          const extracted = extractNameAndPhone(rawName);
+          if (extracted.name) rawName = extracted.name;
+          if (!rawPhone && extracted.phone) rawPhone = extracted.phone;
+        }
+
+        if (rawPhone) {
+          const extractedP = extractNameAndPhone(rawPhone);
+          if (!rawName && extractedP.name) rawName = extractedP.name;
+          if (extractedP.phone) rawPhone = extractedP.phone;
+        }
+
+        const cleanName = cleanNameString(rawName);
+        const cleanPhone = sanitizePhoneNumber(rawPhone);
+        const finalName = cleanName || (cleanPhone ? "Customer" : "");
 
         return {
           ...row,
-          _parsedName: name,
-          _parsedPhone: phone
+          Name: finalName,
+          Phone: cleanPhone,
+          _parsedName: finalName,
+          _parsedPhone: cleanPhone
         };
-      }).filter((c) => c._parsedPhone.length >= 8 || (c._parsedName && c._parsedName !== "Customer"));
+      }).filter((c) => c._parsedPhone.length >= 7 || (c._parsedName && c._parsedName !== "Customer"));
 
       loadContactsIntoUI(parsedRows, file.name);
     } catch (err) {
@@ -637,29 +686,37 @@ function buildMessage(template, contact) {
   for (const [key, val] of Object.entries(contact)) {
     if (!key.startsWith("_")) {
       const regex = new RegExp(`\\{${key}\\}`, "gi");
-      message = message.replace(regex, val !== undefined && val !== null ? String(val) : "");
+      let cleanVal = val !== undefined && val !== null ? String(val) : "";
+      if (/^name$/i.test(key)) {
+        cleanVal = cleanNameString(cleanVal) || "Customer";
+      }
+      message = message.replace(regex, cleanVal);
     }
   }
 
-  message = message.replace(/\{name\}/gi, contact._parsedName || "Customer");
+  const cleanName = cleanNameString(contact._parsedName || contact.Name) || "Customer";
+  message = message.replace(/\{name\}/gi, cleanName);
   message = message.replace(/\{phone\}/gi, contact._parsedPhone || "");
 
   return message;
 }
 
 // In-page automation function executed on WhatsApp Web tab via search bar
-async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, captionText, customSelectors) {
+async function triggerWhatsAppSearchAndSendInPage(contactName, contactPhone, mediaPayload, captionText, customSelectors) {
   return new Promise((resolve) => {
     let elapsed = 0;
     const pollInterval = 250;
     const maxTimeout = 45000;
-    // States: RESET_SEARCH -> TYPE_SEARCH -> WAIT_CHAT_OPEN -> ATTACH_OR_SEND
+    // States: RESET_SEARCH -> SEARCH_CONTACT -> WAIT_CHAT_OPEN -> ATTACH_OR_SEND
     let step = "RESET_SEARCH";
     let stepElapsed = 0;
     let attachButtonClicked = false;
     let lastInjectionTime = 0;
     let lastDropTime = 0;
     let typingAttempts = 0;
+    let currentSearchQuery = (contactName && contactName !== "Customer") ? contactName : (contactPhone || "");
+    let hasAttemptedPhoneFallback = false;
+    const targetDisplayName = contactName && contactName !== "Customer" ? contactName : (contactPhone || "Contact");
 
     // Helper: Query first matching selector from an array with try/catch safety
     function queryFromList(selectorList, context = document) {
@@ -890,7 +947,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
           const okBtn = modal.querySelector("button");
           clickElement(okBtn);
           clearSearchInput();
-          return resolve({ success: false, error: `Contact "${contactQuery}" is not on WhatsApp or invalid` });
+          return resolve({ success: false, error: `Contact "${targetDisplayName}" is not on WhatsApp or invalid` });
         }
       }
 
@@ -932,36 +989,36 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
           sel.removeAllRanges();
           sel.addRange(range);
           document.execCommand("delete", false, null);
-          document.execCommand("insertText", false, contactQuery);
+          document.execCommand("insertText", false, currentSearchQuery);
         } catch (e) {
-          searchBox.innerText = contactQuery;
+          searchBox.innerText = currentSearchQuery;
         }
 
         if (searchBox.tagName === "INPUT") {
-          searchBox.value = contactQuery;
+          searchBox.value = currentSearchQuery;
         }
 
         searchBox.dispatchEvent(new InputEvent("input", {
           bubbles: true,
           cancelable: true,
           inputType: "insertText",
-          data: contactQuery
+          data: currentSearchQuery
         }));
         searchBox.dispatchEvent(new Event("input", { bubbles: true }));
         searchBox.dispatchEvent(new Event("change", { bubbles: true }));
 
         // Check if text was set
         const currentText = (searchBox.innerText || searchBox.textContent || searchBox.value || "").trim();
-        if (currentText.toLowerCase().includes(contactQuery.toLowerCase().substring(0, 3))) {
+        if (currentText.toLowerCase().includes(currentSearchQuery.toLowerCase().substring(0, 3))) {
           step = "WAIT_CHAT_OPEN";
           stepElapsed = 0;
           return;
         } else {
           typingAttempts++;
           if (typingAttempts > 3) {
-            searchBox.innerText = contactQuery;
-            if (searchBox.tagName === "INPUT") searchBox.value = contactQuery;
-            searchBox.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: contactQuery }));
+            searchBox.innerText = currentSearchQuery;
+            if (searchBox.tagName === "INPUT") searchBox.value = currentSearchQuery;
+            searchBox.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: currentSearchQuery }));
             step = "WAIT_CHAT_OPEN";
             stepElapsed = 0;
             return;
@@ -974,52 +1031,86 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
       if (step === "WAIT_CHAT_OPEN") {
         if (stepElapsed >= 600) {
           const searchBox = getSearchBox();
-          const queryLower = contactQuery.toLowerCase().trim();
-          const queryWords = queryLower.split(/\s+/).filter(w => w.length >= 2);
+          const nameLower = (contactName || "").toLowerCase().trim();
+          const nameWords = nameLower.split(/\s+/).filter(w => w.length >= 2);
+          const cleanDigits = (contactPhone || "").replace(/\D/g, "");
+          const phoneSuffix = cleanDigits.length >= 7 ? cleanDigits.slice(-7) : cleanDigits;
 
           let targetElToClick = null;
 
           // 1. Look for matching title in search results
           const allSpans = Array.from(document.querySelectorAll('#pane-side span[title], div[aria-label*="Search results"] span[title]'));
 
-          // Exact or substring match
-          let matchingSpan = allSpans.find(s => {
+          // Exact or substring match for contact name
+          const matchingSpans = allSpans.filter(s => {
             const title = (s.getAttribute("title") || "").toLowerCase().trim();
-            return title === queryLower || title.includes(queryLower) || queryLower.includes(title);
+            if (nameLower && (title === nameLower || title.includes(nameLower) || nameLower.includes(title))) return true;
+            if (nameWords.length > 0 && nameWords.every(w => title.includes(w))) return true;
+            return false;
           });
 
-          // Word-level match if not found (e.g. "Mahesh" or "Yash")
-          if (!matchingSpan && queryWords.length > 0) {
-            matchingSpan = allSpans.find(s => {
-              const title = (s.getAttribute("title") || "").toLowerCase().trim();
-              return queryWords.some(word => title.includes(word));
-            });
-          }
+          // DISAMBIGUATION: If multiple contacts have the same name ("other personalities")
+          if (matchingSpans.length > 1) {
+            let exactMatchSpan = null;
+            if (phoneSuffix) {
+              exactMatchSpan = matchingSpans.find(s => {
+                const row = s.closest('div[role="listitem"], div[role="gridcell"], div[tabindex], div[data-testid="cell-frame-container"]');
+                if (!row) return false;
+                const rowDigits = (row.textContent || "").replace(/\D/g, "");
+                return rowDigits.includes(phoneSuffix);
+              });
+            }
 
-          // If searching self / your own contact, also check for "You" or "(You)"
-          if (!matchingSpan && (queryWords.some(w => ["you", "me", "self", "mahesh"].includes(w)) || stepElapsed > 3000)) {
-            matchingSpan = allSpans.find(s => {
-              const title = (s.getAttribute("title") || "").toLowerCase().trim();
-              return title === "you" || title.includes("(you)") || title.includes("message yourself");
-            });
-          }
-
-          if (matchingSpan) {
-            targetElToClick = matchingSpan;
+            if (exactMatchSpan) {
+              targetElToClick = exactMatchSpan;
+            } else if (cleanDigits && !hasAttemptedPhoneFallback) {
+              // Not visible in row preview: re-search using phone number to isolate this exact personality
+              hasAttemptedPhoneFallback = true;
+              currentSearchQuery = cleanDigits.length >= 10 ? cleanDigits.slice(-10) : cleanDigits;
+              step = "SEARCH_CONTACT";
+              stepElapsed = 0;
+              clearSearchInput();
+              return;
+            } else {
+              targetElToClick = matchingSpans[0];
+            }
+          } else if (matchingSpans.length === 1) {
+            targetElToClick = matchingSpans[0];
           } else {
-            // 2. Check cell containers under #pane-side
-            const cells = Array.from(document.querySelectorAll('#pane-side div[data-testid="cell-frame-container"], #pane-side div[role="listitem"]'));
+            // Check self contact ("You" or "(You)")
+            if (nameWords.some(w => ["you", "me", "self", "mahesh"].includes(w)) || stepElapsed > 3000) {
+              const youSpan = allSpans.find(s => {
+                const title = (s.getAttribute("title") || "").toLowerCase().trim();
+                return title === "you" || title.includes("(you)") || title.includes("message yourself");
+              });
+              if (youSpan) targetElToClick = youSpan;
+            }
 
-            const matchingCell = cells.find(c => {
-              const text = (c.textContent || "").toLowerCase();
-              return text.includes(queryLower) || queryWords.some(w => text.includes(w));
-            });
+            // Fallback: If name was not found after 2.5s and phone is available, search phone number directly
+            if (!targetElToClick && cleanDigits && !hasAttemptedPhoneFallback && stepElapsed > 2500) {
+              hasAttemptedPhoneFallback = true;
+              currentSearchQuery = cleanDigits.length >= 10 ? cleanDigits.slice(-10) : cleanDigits;
+              step = "SEARCH_CONTACT";
+              stepElapsed = 0;
+              clearSearchInput();
+              return;
+            }
 
-            if (matchingCell) {
-              targetElToClick = matchingCell.querySelector('span[title]') || matchingCell;
-            } else if (cells.length > 0 && stepElapsed > 3000) {
-              // Pick the top search result after 3 seconds
-              targetElToClick = cells[0].querySelector('span[title]') || cells[0];
+            // Check cell containers under #pane-side
+            if (!targetElToClick) {
+              const cells = Array.from(document.querySelectorAll('#pane-side div[data-testid="cell-frame-container"], #pane-side div[role="listitem"]'));
+              const matchingCell = cells.find(c => {
+                const text = (c.textContent || "").toLowerCase();
+                const textDigits = text.replace(/\D/g, "");
+                if (phoneSuffix && textDigits.includes(phoneSuffix)) return true;
+                return (nameLower && text.includes(nameLower)) || (nameWords.length > 0 && nameWords.some(w => text.includes(w)));
+              });
+
+              if (matchingCell) {
+                targetElToClick = matchingCell.querySelector('span[title]') || matchingCell;
+              } else if (cells.length > 0 && stepElapsed > 4000) {
+                targetElToClick = cells[0].querySelector('span[title]') || cells[0];
+              }
             }
           }
 
@@ -1066,7 +1157,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
           if (stepElapsed >= 18000) {
             clearInterval(timer);
             clearSearchInput();
-            return resolve({ success: false, error: `Could not open chat for "${contactQuery}". No matching contact found in WhatsApp.` });
+            return resolve({ success: false, error: `Could not open chat for "${targetDisplayName}". No matching contact found in WhatsApp.` });
           }
         }
         return;
@@ -1156,7 +1247,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
 
               setTimeout(() => {
                 clearSearchInput();
-                resolve({ success: true, details: `File & Greeting Sent to ${contactQuery}` });
+                resolve({ success: true, details: `File & Greeting Sent to ${targetDisplayName}` });
               }, 2500);
             }, 600);
             return;
@@ -1265,7 +1356,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
                 clickElement(sendButton);
                 setTimeout(() => {
                   clearSearchInput();
-                  resolve({ success: true, details: `Message Sent to ${contactQuery}` });
+                  resolve({ success: true, details: `Message Sent to ${targetDisplayName}` });
                 }, 1500);
               } else {
                 // Enter key fallback
@@ -1282,7 +1373,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
                 inputBox.dispatchEvent(enterEvt);
                 setTimeout(() => {
                   clearSearchInput();
-                  resolve({ success: true, details: `Message Sent to ${contactQuery} (Enter Key)` });
+                  resolve({ success: true, details: `Message Sent to ${targetDisplayName} (Enter Key)` });
                 }, 1500);
               }
             }, 600);
@@ -1412,14 +1503,13 @@ startBtn.addEventListener("click", async () => {
     const contact = contacts[i];
     const personalizedMessage = buildMessage(template, contact);
 
-    // Contact query to search in WhatsApp Web search bar
-    const contactQuery = (contact._parsedName && contact._parsedName !== "Customer")
-      ? contact._parsedName
-      : (contact._parsedPhone || contact.Name || "Customer");
+    const contactName = cleanNameString(contact._parsedName || contact.Name) || "";
+    const contactPhone = contact._parsedPhone || "";
+    const logDisplayName = contactName && contactName !== "Customer" ? contactName : (contactPhone || "Contact");
 
     if (isSafeMode) {
       // Safe Mode (Dry Run)
-      log(`[DRY RUN] Simulating search & send to "${contactQuery}" (+${contact._parsedPhone || "N/A"}): "${personalizedMessage.substring(0, 40)}..."`, "info");
+      log(`[DRY RUN] Simulating search & send to "${logDisplayName}" (+${contactPhone || "N/A"}): "${personalizedMessage.substring(0, 40)}..."`, "info");
       if (attachedMedia) log(`📎 [Attachment]: ${attachedMedia.name} (${(attachedMedia.size / 1024 / 1024).toFixed(2)} MB)`, "info");
 
       sent++;
@@ -1441,7 +1531,7 @@ startBtn.addEventListener("click", async () => {
       }
     } else {
       // Live Sending Flow (In-Page Search Bar - NO TAB RELOAD)
-      log(`(${i + 1}/${contacts.length}) Searching "${contactQuery}" in WhatsApp Web...`, "info");
+      log(`(${i + 1}/${contacts.length}) Searching "${logDisplayName}" in WhatsApp Web...`, "info");
 
       try {
         // Inject search-and-send automation in MAIN world context (direct access to WhatsApp Web React DOM)
@@ -1450,7 +1540,7 @@ startBtn.addEventListener("click", async () => {
           executionResults = await chrome.scripting.executeScript({
             target: { tabId: activeTab.id },
             func: triggerWhatsAppSearchAndSendInPage,
-            args: [contactQuery, attachedMedia, personalizedMessage, activeSelectors],
+            args: [contactName, contactPhone, attachedMedia, personalizedMessage, activeSelectors],
             world: "MAIN"
           });
         } catch (scriptErr) {
@@ -1458,7 +1548,7 @@ startBtn.addEventListener("click", async () => {
           executionResults = await chrome.scripting.executeScript({
             target: { tabId: activeTab.id },
             func: triggerWhatsAppSearchAndSendInPage,
-            args: [contactQuery, attachedMedia, personalizedMessage, activeSelectors]
+            args: [contactName, contactPhone, attachedMedia, personalizedMessage, activeSelectors]
           });
         }
 
@@ -1476,7 +1566,7 @@ startBtn.addEventListener("click", async () => {
             Timestamp: new Date().toISOString(),
             SentMessage: personalizedMessage
           });
-          log(`✓ Sent successfully to "${contactQuery}" (${resultObj.details})`, "success");
+          log(`✓ Sent successfully to "${logDisplayName}" (${resultObj.details})`, "success");
 
           // Deduct Quota
           if (currentSubscription) {
@@ -1501,7 +1591,7 @@ startBtn.addEventListener("click", async () => {
           Timestamp: new Date().toISOString(),
           SentMessage: personalizedMessage
         });
-        log(`✗ Error for "${contactQuery}": ${errMessage}`, "error");
+        log(`✗ Error for "${logDisplayName}": ${errMessage}`, "error");
       }
     }
 
