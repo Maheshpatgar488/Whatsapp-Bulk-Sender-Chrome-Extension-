@@ -6,3 +6,7 @@ Thumbs.db
 # Graphify output: Ignore build state and logs, but keep main graph file for team context
 graphify-out/*
 !graphify-out/graph.json
+
+# Built packages (stored locally, not in git source repo to avoid false-positive AV warnings)
+*.zip
+*.xpi
