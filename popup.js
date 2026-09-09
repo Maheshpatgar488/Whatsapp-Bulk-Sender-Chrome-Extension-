@@ -864,13 +864,30 @@ async function triggerWhatsAppSearchAndSendInPage(contactName, contactPhone, med
       }
     }
 
-    // Helper: Find WhatsApp search box in left sidebar
+    // Helper: Discover & Heuristically detect elements when static/dynamic selectors are outdated
+    const discoveredSelectors = {};
+
+    function recordDiscoveredSelector(key, el) {
+      if (!el || !key) return;
+      try {
+        let sel = "";
+        if (el.id) sel = `#${el.id}`;
+        else if (el.getAttribute("data-testid")) sel = `[data-testid="${el.getAttribute("data-testid")}"]`;
+        else if (el.getAttribute("aria-label")) sel = `${el.tagName.toLowerCase()}[aria-label="${el.getAttribute("aria-label")}"]`;
+        else if (el.getAttribute("data-icon")) sel = `span[data-icon="${el.getAttribute("data-icon")}"]`;
+        if (sel && !discoveredSelectors[key]) {
+          discoveredSelectors[key] = sel;
+        }
+      } catch (e) {}
+    }
+
+    // Helper: Find WhatsApp search box in left sidebar with Deep Heuristic Scan
     function getSearchBox() {
       if (customSelectors && Array.isArray(customSelectors.searchBox)) {
         const found = queryFromList(customSelectors.searchBox);
         if (found) return found;
       }
-      return (
+      const direct = (
         document.querySelector('#side div[contenteditable="true"]') ||
         document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
         document.querySelector('div[data-testid="chat-list-search"]') ||
@@ -882,6 +899,20 @@ async function triggerWhatsAppSearchAndSendInPage(contactName, contactPhone, med
         document.querySelector('input[placeholder*="Search" i]') ||
         Array.from(document.querySelectorAll('#side div[contenteditable="true"], div[contenteditable="true"]')).find(el => !el.closest('#main') && !el.closest('footer'))
       );
+      if (direct) return direct;
+
+      // Deep Heuristic Fallback: Any editable field within the left sidebar panel (#side or left half)
+      try {
+        const sidePanel = document.querySelector('#side') || document.querySelector('#pane-side')?.parentElement || document.body;
+        const candidates = Array.from(sidePanel.querySelectorAll('[contenteditable="true"], [role="textbox"], input'));
+        for (const cand of candidates) {
+          if (!cand.closest('#main') && !cand.closest('footer')) {
+            recordDiscoveredSelector("searchBox", cand);
+            return cand;
+          }
+        }
+      } catch (e) {}
+      return null;
     }
 
     // Helper: Clear WhatsApp Web left-hand search box completely
@@ -1214,6 +1245,36 @@ async function triggerWhatsAppSearchAndSendInPage(contactName, contactPhone, med
                   return label === "send" || label.includes("send");
                 });
             }
+            // Deep Heuristic Fallback for media viewer send button (SVG paper plane path or primary floating action button)
+            if (!sendBtn) {
+              try {
+                const buttons = Array.from(mediaViewer.querySelectorAll('button, [role="button"]'));
+                for (const b of buttons) {
+                  if (b.closest('footer')) continue;
+                  const svg = b.querySelector('svg');
+                  if (svg) {
+                    const paths = Array.from(svg.querySelectorAll('path')).map(p => p.getAttribute('d') || '');
+                    // Common SVG characteristics for paper plane or send
+                    if (paths.some(d => d.includes('M1.101') || d.includes('M2.01') || d.includes('M3.4') || d.length > 50)) {
+                      sendBtn = b;
+                      recordDiscoveredSelector("mediaViewerSend", b);
+                      break;
+                    }
+                  }
+                }
+                if (!sendBtn && buttons.length > 0) {
+                  // The bottom-right floating round action button in WhatsApp media viewer is almost always the send button
+                  const lastRoundBtn = buttons.reverse().find(b => {
+                    const rect = b.getBoundingClientRect();
+                    return rect.width > 24 && rect.height > 24;
+                  });
+                  if (lastRoundBtn) {
+                    sendBtn = lastRoundBtn;
+                    recordDiscoveredSelector("mediaViewerSend", lastRoundBtn);
+                  }
+                }
+              } catch (e) {}
+            }
           }
 
           // IF MEDIA PREVIEW IS ACTIVE AND SEND BUTTON IS FOUND:
@@ -1247,7 +1308,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactName, contactPhone, med
 
               setTimeout(() => {
                 clearSearchInput();
-                resolve({ success: true, details: `File & Greeting Sent to ${targetDisplayName}` });
+                resolve({ success: true, details: `File & Greeting Sent to ${targetDisplayName}`, discoveredSelectors });
               }, 2500);
             }, 600);
             return;
@@ -1281,6 +1342,24 @@ async function triggerWhatsAppSearchAndSendInPage(contactName, contactPhone, med
                 document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
                 document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
                 document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]');
+            }
+            // Deep Heuristic Fallback for attach button in footer (first button to the left of the text input)
+            if (!attachBtn) {
+              try {
+                const footerButtons = Array.from(document.querySelectorAll('footer button, footer [role="button"]'));
+                for (const fb of footerButtons) {
+                  const svg = fb.querySelector('svg');
+                  if (svg) {
+                    const paths = Array.from(svg.querySelectorAll('path')).map(p => p.getAttribute('d') || '');
+                    // Plus or paperclip path characteristic
+                    if (paths.some(d => d.includes('M19 11h-6V5') || d.includes('M1.101') || d.includes('M12') || d.length > 25)) {
+                      attachBtn = fb;
+                      recordDiscoveredSelector("attachButton", fb);
+                      break;
+                    }
+                  }
+                }
+              } catch (e) {}
             }
 
             if (attachBtn) {
@@ -1350,13 +1429,36 @@ async function triggerWhatsAppSearchAndSendInPage(contactName, contactPhone, med
                   document.querySelector('footer button[aria-label="Send"]') ||
                   document.querySelector('footer div[aria-label="Send"]');
               }
+              // Deep Heuristic Fallback for send button in footer (action button to the right of text input with svg)
+              if (!sendButton) {
+                try {
+                  const footerButtons = Array.from(document.querySelectorAll('footer button, footer [role="button"]'));
+                  for (const fb of footerButtons) {
+                    const label = (fb.getAttribute("aria-label") || fb.getAttribute("title") || "").toLowerCase();
+                    if (label.includes("send")) {
+                      sendButton = fb;
+                      recordDiscoveredSelector("sendButton", fb);
+                      break;
+                    }
+                    const svg = fb.querySelector('svg');
+                    if (svg) {
+                      const paths = Array.from(svg.querySelectorAll('path')).map(p => p.getAttribute('d') || '');
+                      if (paths.some(d => d.includes('M1.101') || d.includes('M2.01') || d.includes('M3.4'))) {
+                        sendButton = fb;
+                        recordDiscoveredSelector("sendButton", fb);
+                        break;
+                      }
+                    }
+                  }
+                } catch (e) {}
+              }
 
               if (sendButton) {
                 clearInterval(timer);
                 clickElement(sendButton);
                 setTimeout(() => {
                   clearSearchInput();
-                  resolve({ success: true, details: `Message Sent to ${targetDisplayName}` });
+                  resolve({ success: true, details: `Message Sent to ${targetDisplayName}`, discoveredSelectors });
                 }, 1500);
               } else {
                 // Enter key fallback
@@ -1373,7 +1475,7 @@ async function triggerWhatsAppSearchAndSendInPage(contactName, contactPhone, med
                 inputBox.dispatchEvent(enterEvt);
                 setTimeout(() => {
                   clearSearchInput();
-                  resolve({ success: true, details: `Message Sent to ${targetDisplayName} (Enter Key)` });
+                  resolve({ success: true, details: `Message Sent to ${targetDisplayName} (Enter Key)`, discoveredSelectors });
                 }, 1500);
               }
             }, 600);
@@ -1567,6 +1669,20 @@ startBtn.addEventListener("click", async () => {
             SentMessage: personalizedMessage
           });
           log(`✓ Sent successfully to "${logDisplayName}" (${resultObj.details})`, "success");
+
+          // Self-Healing: If new selectors were discovered heuristically, persist them into activeSelectors and local storage
+          if (resultObj.discoveredSelectors && Object.keys(resultObj.discoveredSelectors).length > 0) {
+            let updatedAny = false;
+            for (const [key, sel] of Object.entries(resultObj.discoveredSelectors)) {
+              if (activeSelectors[key] && !activeSelectors[key].includes(sel)) {
+                activeSelectors[key].unshift(sel);
+                updatedAny = true;
+              }
+            }
+            if (updatedAny && typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+              chrome.storage.local.set({ cachedSelectors: activeSelectors });
+            }
+          }
 
           // Deduct Quota
           if (currentSubscription) {
