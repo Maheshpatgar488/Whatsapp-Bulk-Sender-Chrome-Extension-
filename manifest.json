@@ -29,7 +29,8 @@
   ],
   "host_permissions": [
     "*://web.whatsapp.com/*",
-    "https://web.whatsapp.com/*"
+    "https://web.whatsapp.com/*",
+    "https://raw.githubusercontent.com/*"
   ],
   "action": {
     "default_popup": "popup.html",

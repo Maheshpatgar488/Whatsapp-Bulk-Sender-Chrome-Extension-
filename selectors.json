@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "updatedAt": "2026-09-09",
+  "searchBox": [
+    "#side div[contenteditable='true']",
+    "div[contenteditable='true'][data-tab='3']",
+    "div[data-testid='chat-list-search']",
+    "#side div[role='textbox']",
+    "div[role='textbox'][aria-label*='Search' i]",
+    "div[aria-label*='Search or start new chat' i]",
+    "div[aria-label*='Search' i][contenteditable='true']",
+    "#side input[type='text']",
+    "input[placeholder*='Search' i]"
+  ],
+  "clearSearch": [
+    "#side button[aria-label*='Cancel' i]",
+    "#side button[aria-label*='Clear' i]",
+    "#side span[data-icon='x-alt']",
+    "#side span[data-icon='x']",
+    "#side span[data-icon='search-alt-close']",
+    "button[aria-label='Cancel search']",
+    "button[aria-label='Clear search']"
+  ],
+  "attachButton": [
+    "footer [aria-label='Attach']",
+    "footer [title='Attach']",
+    "footer span[data-icon='clip']",
+    "footer span[data-icon='plus']",
+    "footer span[data-icon='attach-menu-plus']",
+    "span[data-icon='plus-large']"
+  ],
+  "sendButton": [
+    "footer button span[data-icon='send']",
+    "footer span[data-icon='send']",
+    "footer span[data-icon='wds-send-solid']",
+    "footer span[data-icon='send-filled']",
+    "footer button[aria-label='Send']",
+    "footer div[aria-label='Send']"
+  ],
+  "mediaViewerSend": [
+    "span[data-icon='send']",
+    "span[data-icon='wds-send-solid']",
+    "span[data-icon='send-filled']"
+  ]
+}

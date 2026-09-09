@@ -4,6 +4,77 @@ let isSending = false;
 let availableKeys = [];
 let attachedMedia = null; // { name, type, size, base64 }
 
+// Over-The-Air (OTA) Resilient Dynamic Selectors
+const DEFAULT_SELECTORS = {
+  searchBox: [
+    "#side div[contenteditable='true']",
+    "div[contenteditable='true'][data-tab='3']",
+    "div[data-testid='chat-list-search']",
+    "#side div[role='textbox']",
+    "div[role='textbox'][aria-label*='Search' i]",
+    "div[aria-label*='Search or start new chat' i]",
+    "div[aria-label*='Search' i][contenteditable='true']",
+    "#side input[type='text']",
+    "input[placeholder*='Search' i]"
+  ],
+  clearSearch: [
+    "#side button[aria-label*='Cancel' i]",
+    "#side button[aria-label*='Clear' i]",
+    "#side span[data-icon='x-alt']",
+    "#side span[data-icon='x']",
+    "#side span[data-icon='search-alt-close']",
+    "button[aria-label='Cancel search']",
+    "button[aria-label='Clear search']"
+  ],
+  attachButton: [
+    "footer [aria-label='Attach']",
+    "footer [title='Attach']",
+    "footer span[data-icon='clip']",
+    "footer span[data-icon='plus']",
+    "footer span[data-icon='attach-menu-plus']",
+    "span[data-icon='plus-large']"
+  ],
+  sendButton: [
+    "footer button span[data-icon='send']",
+    "footer span[data-icon='send']",
+    "footer span[data-icon='wds-send-solid']",
+    "footer span[data-icon='send-filled']",
+    "footer button[aria-label='Send']",
+    "footer div[aria-label='Send']"
+  ],
+  mediaViewerSend: [
+    "span[data-icon='send']",
+    "span[data-icon='wds-send-solid']",
+    "span[data-icon='send-filled']"
+  ]
+};
+
+let activeSelectors = { ...DEFAULT_SELECTORS };
+const SELECTORS_REPO_URL = "https://raw.githubusercontent.com/Maheshpatgar488/Whatsapp-Bulk-Sender-Chrome-Extension-/main/selectors.json";
+
+async function initDynamicSelectors() {
+  try {
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      const cached = await new Promise((res) => chrome.storage.local.get("cachedSelectors", res));
+      if (cached && cached.cachedSelectors) {
+        activeSelectors = { ...DEFAULT_SELECTORS, ...cached.cachedSelectors };
+      }
+    }
+    fetch(SELECTORS_REPO_URL, { cache: "no-cache" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((remote) => {
+        if (remote && typeof remote === "object") {
+          activeSelectors = { ...DEFAULT_SELECTORS, ...remote };
+          if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+            chrome.storage.local.set({ cachedSelectors: remote });
+          }
+        }
+      })
+      .catch(() => {});
+  } catch (e) {}
+}
+initDynamicSelectors();
+
 const fileInput = document.getElementById("excelFile");
 const fileBadge = document.getElementById("fileBadge");
 const templateInput = document.getElementById("messageTemplate");
@@ -577,7 +648,7 @@ function buildMessage(template, contact) {
 }
 
 // In-page automation function executed on WhatsApp Web tab via search bar
-async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, captionText) {
+async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, captionText, customSelectors) {
   return new Promise((resolve) => {
     let elapsed = 0;
     const pollInterval = 250;
@@ -589,6 +660,18 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
     let lastInjectionTime = 0;
     let lastDropTime = 0;
     let typingAttempts = 0;
+
+    // Helper: Query first matching selector from an array with try/catch safety
+    function queryFromList(selectorList, context = document) {
+      if (!Array.isArray(selectorList)) return null;
+      for (const s of selectorList) {
+        try {
+          const el = context.querySelector(s);
+          if (el) return el;
+        } catch (e) {}
+      }
+      return null;
+    }
 
     // Helper: Synthetic Mouse & Pointer Event trigger for React / Web Components
     function clickElement(el) {
@@ -726,6 +809,10 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
 
     // Helper: Find WhatsApp search box in left sidebar
     function getSearchBox() {
+      if (customSelectors && Array.isArray(customSelectors.searchBox)) {
+        const found = queryFromList(customSelectors.searchBox);
+        if (found) return found;
+      }
       return (
         document.querySelector('#side div[contenteditable="true"]') ||
         document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
@@ -746,12 +833,19 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
       const currentText = box ? (box.innerText || box.textContent || box.value || "").trim() : "";
 
       if (currentText.length > 0) {
-        const cancelBtn =
-          document.querySelector('#side button[aria-label*="Cancel" i]') ||
-          document.querySelector('#side button[aria-label*="Clear" i]') ||
-          document.querySelector('#side span[data-icon="x-alt"]')?.closest('button, [role="button"]') ||
-          document.querySelector('#side span[data-icon="x"]')?.closest('button, [role="button"]') ||
-          document.querySelector('#side span[data-icon="search-alt-close"]')?.closest('button, [role="button"]');
+        let cancelBtn = null;
+        if (customSelectors && Array.isArray(customSelectors.clearSearch)) {
+          const c = queryFromList(customSelectors.clearSearch);
+          if (c) cancelBtn = c.tagName === "BUTTON" ? c : c.closest('button, [role="button"]') || c;
+        }
+        if (!cancelBtn) {
+          cancelBtn =
+            document.querySelector('#side button[aria-label*="Cancel" i]') ||
+            document.querySelector('#side button[aria-label*="Clear" i]') ||
+            document.querySelector('#side span[data-icon="x-alt"]')?.closest('button, [role="button"]') ||
+            document.querySelector('#side span[data-icon="x"]')?.closest('button, [role="button"]') ||
+            document.querySelector('#side span[data-icon="search-alt-close"]')?.closest('button, [role="button"]');
+        }
 
         if (cancelBtn) {
           clickElement(cancelBtn);
@@ -1006,16 +1100,29 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
 
           let sendBtn = null;
           if (isPreviewActive && mediaViewer) {
-            sendBtn =
-              mediaViewer.querySelector('div[data-testid="media-caption-input-container"]')?.parentElement?.querySelector('span[data-icon="send"], span[data-icon="wds-send-solid"], span[data-icon="send-filled"]')?.closest('button, [role="button"], div[role="button"]') ||
-              Array.from(document.querySelectorAll('span[data-icon="send"], span[data-icon="wds-send-solid"], span[data-icon="send-filled"]'))
-                .map(s => s.closest('button, [role="button"], div[role="button"]'))
-                .find(b => b && !b.closest('footer')) ||
-              Array.from(mediaViewer.querySelectorAll('button, div[role="button"]')).find(b => {
-                if (b.closest('footer')) return false;
-                const label = (b.getAttribute("aria-label") || b.getAttribute("title") || "").toLowerCase();
-                return label === "send" || label.includes("send");
-              });
+            if (customSelectors && Array.isArray(customSelectors.mediaViewerSend)) {
+              for (const sel of customSelectors.mediaViewerSend) {
+                try {
+                  const match = mediaViewer.querySelector(sel);
+                  if (match) {
+                    sendBtn = match.closest('button, [role="button"], div[role="button"]') || match;
+                    break;
+                  }
+                } catch (e) {}
+              }
+            }
+            if (!sendBtn) {
+              sendBtn =
+                mediaViewer.querySelector('div[data-testid="media-caption-input-container"]')?.parentElement?.querySelector('span[data-icon="send"], span[data-icon="wds-send-solid"], span[data-icon="send-filled"]')?.closest('button, [role="button"], div[role="button"]') ||
+                Array.from(document.querySelectorAll('span[data-icon="send"], span[data-icon="wds-send-solid"], span[data-icon="send-filled"]'))
+                  .map(s => s.closest('button, [role="button"], div[role="button"]'))
+                  .find(b => b && !b.closest('footer')) ||
+                Array.from(mediaViewer.querySelectorAll('button, div[role="button"]')).find(b => {
+                  if (b.closest('footer')) return false;
+                  const label = (b.getAttribute("aria-label") || b.getAttribute("title") || "").toLowerCase();
+                  return label === "send" || label.includes("send");
+                });
+            }
           }
 
           // IF MEDIA PREVIEW IS ACTIVE AND SEND BUTTON IS FOUND:
@@ -1070,13 +1177,20 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
           // Attempt 2: If preview didn't open after 3s, click the Attach (+) button ONCE (never toggle)
           if (stepElapsed > 3000 && !attachButtonClicked) {
             attachButtonClicked = true;
-            const attachBtn =
-              document.querySelector('footer [aria-label="Attach"]') ||
-              document.querySelector('footer [title="Attach"]') ||
-              document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
-              document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
-              document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
-              document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]');
+            let attachBtn = null;
+            if (customSelectors && Array.isArray(customSelectors.attachButton)) {
+              const a = queryFromList(customSelectors.attachButton);
+              if (a) attachBtn = a.tagName === "BUTTON" ? a : a.closest('button, [role="button"]') || a;
+            }
+            if (!attachBtn) {
+              attachBtn =
+                document.querySelector('footer [aria-label="Attach"]') ||
+                document.querySelector('footer [title="Attach"]') ||
+                document.querySelector('footer span[data-icon="clip"]')?.closest('button, [role="button"]') ||
+                document.querySelector('footer span[data-icon="plus"]')?.closest('button, [role="button"]') ||
+                document.querySelector('footer span[data-icon="attach-menu-plus"]')?.closest('button, [role="button"]') ||
+                document.querySelector('span[data-icon="plus-large"]')?.closest('button, [role="button"]');
+            }
 
             if (attachBtn) {
               clickElement(attachBtn);
@@ -1131,13 +1245,20 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
             }
 
             setTimeout(() => {
-              const sendButton =
-                document.querySelector('footer button span[data-icon="send"]')?.closest("button") ||
-                document.querySelector('footer span[data-icon="send"]')?.closest("button") ||
-                document.querySelector('footer span[data-icon="wds-send-solid"]')?.closest('button, [role="button"]') ||
-                document.querySelector('footer span[data-icon="send-filled"]')?.closest('button, [role="button"]') ||
-                document.querySelector('footer button[aria-label="Send"]') ||
-                document.querySelector('footer div[aria-label="Send"]');
+              let sendButton = null;
+              if (customSelectors && Array.isArray(customSelectors.sendButton)) {
+                const sb = queryFromList(customSelectors.sendButton);
+                if (sb) sendButton = sb.tagName === "BUTTON" ? sb : sb.closest('button, [role="button"]') || sb;
+              }
+              if (!sendButton) {
+                sendButton =
+                  document.querySelector('footer button span[data-icon="send"]')?.closest("button") ||
+                  document.querySelector('footer span[data-icon="send"]')?.closest("button") ||
+                  document.querySelector('footer span[data-icon="wds-send-solid"]')?.closest('button, [role="button"]') ||
+                  document.querySelector('footer span[data-icon="send-filled"]')?.closest('button, [role="button"]') ||
+                  document.querySelector('footer button[aria-label="Send"]') ||
+                  document.querySelector('footer div[aria-label="Send"]');
+              }
 
               if (sendButton) {
                 clearInterval(timer);
@@ -1329,7 +1450,7 @@ startBtn.addEventListener("click", async () => {
           executionResults = await chrome.scripting.executeScript({
             target: { tabId: activeTab.id },
             func: triggerWhatsAppSearchAndSendInPage,
-            args: [contactQuery, attachedMedia, personalizedMessage],
+            args: [contactQuery, attachedMedia, personalizedMessage, activeSelectors],
             world: "MAIN"
           });
         } catch (scriptErr) {
@@ -1337,7 +1458,7 @@ startBtn.addEventListener("click", async () => {
           executionResults = await chrome.scripting.executeScript({
             target: { tabId: activeTab.id },
             func: triggerWhatsAppSearchAndSendInPage,
-            args: [contactQuery, attachedMedia, personalizedMessage]
+            args: [contactQuery, attachedMedia, personalizedMessage, activeSelectors]
           });
         }
 
@@ -1394,17 +1515,17 @@ startBtn.addEventListener("click", async () => {
       try {
         await chrome.scripting.executeScript({
           target: { tabId: activeTab.id },
-          func: () => {
-            const clearButtons = Array.from(document.querySelectorAll(
-              '#side button[aria-label*="Cancel"], #side button[aria-label*="Clear"], ' +
-              '#side span[data-icon="x-alt"], #side span[data-icon="x"], #side span[data-icon="search-alt-close"], ' +
-              'button[aria-label="Cancel search"], button[aria-label="Clear search"]'
-            ));
+          func: (clearList) => {
+            const selectors = (Array.isArray(clearList) && clearList.length > 0)
+              ? clearList.join(", ")
+              : '#side button[aria-label*="Cancel"], #side button[aria-label*="Clear"], #side span[data-icon="x-alt"], #side span[data-icon="x"], #side span[data-icon="search-alt-close"], button[aria-label="Cancel search"], button[aria-label="Clear search"]';
+            const clearButtons = Array.from(document.querySelectorAll(selectors));
             for (const b of clearButtons) {
               const act = b.tagName === "BUTTON" ? b : b.closest('button, [role="button"]') || b;
               if (act && typeof act.click === "function") act.click();
             }
           },
+          args: [activeSelectors ? activeSelectors.clearSearch : []],
           world: "MAIN"
         });
       } catch (e) {}
