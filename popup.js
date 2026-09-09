@@ -1248,19 +1248,8 @@ startBtn.addEventListener("click", async () => {
   let sent = 0;
   let failed = 0;
 
-  // Initial setup: For Live sending, ensure active tab is focused and reloaded ONCE
+  // Initial setup: For Live sending, verify WhatsApp Web interface is mounted
   if (!isSafeMode) {
-    try {
-      log("🔄 Initializing WhatsApp Web (one-time refresh/focus)...", "info");
-      await chrome.tabs.update(activeTab.id, { active: true });
-      if (activeTab.windowId) {
-        await chrome.windows.update(activeTab.windowId, { focused: true });
-      }
-      await chrome.tabs.reload(activeTab.id);
-      await new Promise((r) => setTimeout(r, 6500));
-    } catch (e) {
-      console.warn("Tab init error:", e);
-    }
 
     // Verify WhatsApp Web interface is mounted
     let isReady = false;
