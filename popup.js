@@ -724,22 +724,19 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
       }
     }
 
-    // Helper: Find WhatsApp search box specifically inside left sidebar (#side)
+    // Helper: Find WhatsApp search box in left sidebar
     function getSearchBox() {
-      const side = document.querySelector('#side');
-      if (side) {
-        const sideInput =
-          side.querySelector('div[contenteditable="true"]') ||
-          side.querySelector('div[role="textbox"]') ||
-          side.querySelector('input[type="text"]') ||
-          side.querySelector('input');
-        if (sideInput) return sideInput;
-      }
       return (
-        document.querySelector('div[data-testid="chat-list-search"]') ||
         document.querySelector('#side div[contenteditable="true"]') ||
+        document.querySelector('div[contenteditable="true"][data-tab="3"]') ||
+        document.querySelector('div[data-testid="chat-list-search"]') ||
+        document.querySelector('#side div[role="textbox"]') ||
+        document.querySelector('div[role="textbox"][aria-label*="Search" i]') ||
+        document.querySelector('div[aria-label*="Search or start new chat" i]') ||
+        document.querySelector('div[aria-label*="Search" i][contenteditable="true"]') ||
         document.querySelector('#side input[type="text"]') ||
-        document.querySelector('input[placeholder*="Search or start new chat" i]')
+        document.querySelector('input[placeholder*="Search" i]') ||
+        Array.from(document.querySelectorAll('#side div[contenteditable="true"], div[contenteditable="true"]')).find(el => !el.closest('#main') && !el.closest('footer'))
       );
     }
 
@@ -902,6 +899,14 @@ async function triggerWhatsAppSearchAndSendInPage(contactQuery, mediaPayload, ca
             matchingSpan = allSpans.find(s => {
               const title = (s.getAttribute("title") || "").toLowerCase().trim();
               return queryWords.some(word => title.includes(word));
+            });
+          }
+
+          // If searching self / your own contact, also check for "You" or "(You)"
+          if (!matchingSpan && (queryWords.some(w => ["you", "me", "self", "mahesh"].includes(w)) || stepElapsed > 3000)) {
+            matchingSpan = allSpans.find(s => {
+              const title = (s.getAttribute("title") || "").toLowerCase().trim();
+              return title === "you" || title.includes("(you)") || title.includes("message yourself");
             });
           }
 
@@ -1243,10 +1248,21 @@ startBtn.addEventListener("click", async () => {
   let sent = 0;
   let failed = 0;
 
-  // Initial setup: For Live sending, verify WhatsApp Web interface is mounted
+  // Initial setup: For Live sending, ensure active tab is focused and reloaded ONCE
   if (!isSafeMode) {
+    try {
+      log("🔄 Initializing WhatsApp Web (one-time refresh/focus)...", "info");
+      await chrome.tabs.update(activeTab.id, { active: true });
+      if (activeTab.windowId) {
+        await chrome.windows.update(activeTab.windowId, { focused: true });
+      }
+      await chrome.tabs.reload(activeTab.id);
+      await new Promise((r) => setTimeout(r, 6500));
+    } catch (e) {
+      console.warn("Tab init error:", e);
+    }
 
-    // Check if WhatsApp Web interface is already mounted
+    // Verify WhatsApp Web interface is mounted
     let isReady = false;
     for (let attempt = 0; attempt < 15; attempt++) {
       try {
@@ -1267,9 +1283,6 @@ startBtn.addEventListener("click", async () => {
           break;
         }
       } catch (e) {}
-      if (attempt === 0) {
-        log("🔄 Verifying WhatsApp Web interface is ready...", "info");
-      }
       await new Promise((r) => setTimeout(r, 1000));
     }
 
